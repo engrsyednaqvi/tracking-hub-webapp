@@ -445,6 +445,17 @@ export function receiptDispatchedAt(receipt: EtsyReceipt): string | null {
   return new Date(Math.max(...candidates) * 1000).toISOString();
 }
 
+/** Etsy “ship by” / expected dispatch deadline (latest among line items). */
+export function receiptShipByAt(receipt: EtsyReceipt): string | null {
+  const candidates: number[] = [];
+  for (const t of receipt.transactions ?? []) {
+    const ts = Number(t.expected_ship_date ?? 0);
+    if (Number.isFinite(ts) && ts > 0) candidates.push(ts);
+  }
+  if (!candidates.length) return null;
+  return new Date(Math.max(...candidates) * 1000).toISOString();
+}
+
 export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
   etsyOrderNumber: string;
   etsyReceiptId: string;
@@ -456,6 +467,7 @@ export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
   etsyStatusRaw: string;
   createdAt: string;
   dispatchedAt: string | null;
+  shipByAt: string | null;
   listingId: number | null;
 } {
   const id = String(receipt.receipt_id ?? '').trim();
@@ -488,6 +500,7 @@ export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
     etsyStatusRaw: mapped.etsyStatusRaw,
     createdAt,
     dispatchedAt: receiptDispatchedAt(receipt),
+    shipByAt: receiptShipByAt(receipt),
     listingId,
   };
 }

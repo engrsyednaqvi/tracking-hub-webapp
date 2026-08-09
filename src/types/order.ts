@@ -38,6 +38,8 @@ export interface Order {
   etsyShipmentId?: string;
   /** Latest ship/dispatch time from Etsy (shipped_timestamp / shipment notification). */
   dispatchedAt?: string;
+  /** Etsy expected ship-by deadline (for orders not yet dispatched). */
+  shipByAt?: string;
   createdAt: string;
   updatedAt: string;
 }

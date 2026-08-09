@@ -28,6 +28,12 @@ import type { Order } from '@/types';
 type SortKey = 'date' | 'status' | 'dispatched';
 type SortDir = 'asc' | 'desc';
 
+/** Actual dispatch date, else Etsy ship-by deadline for unshipped orders. */
+function dispatchColumnTime(order: Order): number {
+  const iso = order.dispatchedAt || order.shipByAt;
+  return iso ? new Date(iso).getTime() || 0 : 0;
+}
+
 export function OrdersTable({
   statusFilter,
   onStatusFilterChange,
@@ -51,9 +57,9 @@ export function OrdersTable({
         return (statusSortRank(a.status) - statusSortRank(b.status)) * dir;
       }
       if (sortKey === 'dispatched') {
-        const ta = new Date(a.dispatchedAt ?? 0).getTime() || 0;
-        const tb = new Date(b.dispatchedAt ?? 0).getTime() || 0;
-        // Empty dispatch dates sort last in both directions.
+        const ta = dispatchColumnTime(a);
+        const tb = dispatchColumnTime(b);
+        // Empty dates sort last in both directions.
         if (!ta && !tb) return 0;
         if (!ta) return 1;
         if (!tb) return -1;
@@ -145,7 +151,7 @@ export function OrdersTable({
                 <th className="px-3 py-2.5 font-medium">Tracking</th>
                 <th className="px-3 py-2.5 font-medium">
                   <SortButton
-                    label="Dispatched"
+                    label="Ship by"
                     active={sortKey === 'dispatched'}
                     dir={sortDir}
                     onClick={() => toggleSort('dispatched')}
@@ -273,7 +279,16 @@ function OrderRow({
         {order.carrier ? <p className="text-xs text-slate-400">{order.carrier}</p> : null}
       </td>
       <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">
-        {formatOrderDate(order.dispatchedAt)}
+        {order.dispatchedAt ? (
+          <span title="Dispatched">{formatOrderDate(order.dispatchedAt)}</span>
+        ) : order.shipByAt ? (
+          <span title="Ship by (not yet dispatched)">
+            <span className="block">{formatOrderDate(order.shipByAt)}</span>
+            <span className="text-xs text-slate-400">Ship by</span>
+          </span>
+        ) : (
+          <span>—</span>
+        )}
       </td>
       <td className="px-3 py-2.5 text-right">
         {canDelete ? (

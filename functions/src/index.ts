@@ -381,6 +381,7 @@ export const etsySync = onCall(
               ...(fields.dispatchedAt
                 ? { dispatchedAt: fields.dispatchedAt }
                 : {}),
+              ...(fields.shipByAt ? { shipByAt: fields.shipByAt } : {}),
               ...(imageUrl && !prev.get('imageUrl') ? { imageUrl } : {}),
               updatedAt: now,
             },
@@ -404,6 +405,7 @@ export const etsySync = onCall(
             trackingNumber: fields.trackingNumber,
             carrier: fields.carrier,
             ...(fields.dispatchedAt ? { dispatchedAt: fields.dispatchedAt } : {}),
+            ...(fields.shipByAt ? { shipByAt: fields.shipByAt } : {}),
             createdAt: fields.createdAt,
             updatedAt: now,
           });
