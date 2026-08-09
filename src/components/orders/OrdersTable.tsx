@@ -1,4 +1,5 @@
-import { ExternalLink, Package, Trash2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { ArrowDown, ArrowUp, ArrowUpDown, ExternalLink, Package, Trash2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useShops } from '@/context/ShopContext';
 import { deleteOrder } from '@/services/orders';
@@ -9,12 +10,16 @@ import {
   orderMatchesFilter,
   statusHelp,
   statusLabel,
+  statusSortRank,
   statusTone,
   type OrderFilterId,
 } from '@/utils/status';
 import { buildTrackingUrl } from '@/utils/trackingUrl';
 import { cn } from '@/lib/cn';
 import type { Order } from '@/types';
+
+type SortKey = 'date' | 'status';
+type SortDir = 'asc' | 'desc';
 
 export function OrdersTable({
   statusFilter,
@@ -25,8 +30,36 @@ export function OrdersTable({
 }) {
   const { user, demoMode } = useAuth();
   const { filteredOrders, shops, loading } = useShops();
+  const [sortKey, setSortKey] = useState<SortKey>('date');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
 
-  const visible = filteredOrders.filter((o) => orderMatchesFilter(o, statusFilter));
+  const visible = useMemo(() => {
+    const rows = filteredOrders.filter((o) => orderMatchesFilter(o, statusFilter));
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      if (sortKey === 'date') {
+        const ta = new Date(a.createdAt).getTime() || 0;
+        const tb = new Date(b.createdAt).getTime() || 0;
+        if (ta !== tb) return (ta - tb) * dir;
+        return (statusSortRank(a.status) - statusSortRank(b.status)) * dir;
+      }
+      const sa = statusSortRank(a.status);
+      const sb = statusSortRank(b.status);
+      if (sa !== sb) return (sa - sb) * dir;
+      const ta = new Date(a.createdAt).getTime() || 0;
+      const tb = new Date(b.createdAt).getTime() || 0;
+      return (tb - ta); // newest first as tie-breaker when sorting by status
+    });
+  }, [filteredOrders, statusFilter, sortKey, sortDir]);
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortKey(key);
+    setSortDir(key === 'date' ? 'desc' : 'asc');
+  }
 
   if (loading) {
     return <p className="text-sm text-slate-500">Loading orders…</p>;
@@ -61,12 +94,6 @@ export function OrdersTable({
         })}
       </div>
 
-      <p className="text-xs text-slate-500">
-        Statuses match Etsy shipping:{' '}
-        <span className="font-medium text-slate-600">No tracking</span>, Pre-transit, In transit,
-        Delivered, Cancelled. Hover a badge for details.
-      </p>
-
       {!visible.length ? (
         <div className="rounded-2xl border border-dashed border-slate-300 bg-white/60 px-6 py-14 text-center">
           <p className="text-sm font-medium text-slate-800">No orders in this filter</p>
@@ -81,9 +108,23 @@ export function OrdersTable({
               <tr>
                 <th className="px-3 py-2.5 font-medium">Item</th>
                 <th className="px-3 py-2.5 font-medium">Order</th>
-                <th className="px-3 py-2.5 font-medium">Date</th>
+                <th className="px-3 py-2.5 font-medium">
+                  <SortButton
+                    label="Date"
+                    active={sortKey === 'date'}
+                    dir={sortDir}
+                    onClick={() => toggleSort('date')}
+                  />
+                </th>
                 <th className="px-3 py-2.5 font-medium">Customer</th>
-                <th className="px-3 py-2.5 font-medium">Status</th>
+                <th className="px-3 py-2.5 font-medium">
+                  <SortButton
+                    label="Status"
+                    active={sortKey === 'status'}
+                    dir={sortDir}
+                    onClick={() => toggleSort('status')}
+                  />
+                </th>
                 <th className="px-3 py-2.5 font-medium">Tracking</th>
                 <th className="px-3 py-2.5 font-medium" />
               </tr>
@@ -103,6 +144,33 @@ export function OrdersTable({
         </div>
       )}
     </div>
+  );
+}
+
+function SortButton({
+  label,
+  active,
+  dir,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  dir: SortDir;
+  onClick: () => void;
+}) {
+  const Icon = !active ? ArrowUpDown : dir === 'asc' ? ArrowUp : ArrowDown;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'inline-flex items-center gap-1 uppercase tracking-wide transition-colors',
+        active ? 'text-brand' : 'text-slate-500 hover:text-slate-800',
+      )}
+    >
+      {label}
+      <Icon className="h-3.5 w-3.5" />
+    </button>
   );
 }
 
@@ -154,11 +222,7 @@ function OrderRow({
       <td className="px-3 py-2.5 text-slate-600">{order.customerName || '—'}</td>
       <td className="px-3 py-2.5">
         <span
-          title={
-            order.etsyStatusRaw
-              ? `${help}${help ? '\n' : ''}Etsy: ${order.etsyStatusRaw}`
-              : help
-          }
+          title={help}
           className={cn(
             'inline-flex rounded-md px-2 py-0.5 text-xs font-medium',
             statusTone(order.status),

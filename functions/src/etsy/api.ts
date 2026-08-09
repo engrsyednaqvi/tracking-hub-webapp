@@ -266,6 +266,12 @@ export function parseEtsyShippingStatusText(raw: string): EtsyShippingStatus | n
   return null;
 }
 
+/**
+ * Map receipt → Etsy seller-UI shipping labels using receipt flags only
+ * (no external carrier APIs).
+ *
+ * Etsy UI: Cancelled | Delivered | In transit | Pre-transit | No tracking
+ */
 function shippingStatusFromReceipt(receipt: EtsyReceipt): {
   status: EtsyShippingStatus;
   etsyStatusRaw: string;
@@ -277,28 +283,21 @@ function shippingStatusFromReceipt(receipt: EtsyReceipt): {
     shipment.tracking_code ?? shipment.trackingCode ?? '',
   ).trim();
   const carrier = String(shipment.carrier_name ?? shipment.carrierName ?? '').trim();
-
   const receiptStatus = String(receipt.status ?? '').trim();
-  const hints: string[] = [];
-  if (receiptStatus) hints.push(receiptStatus);
+  const shipped =
+    truthyFlag(receipt.is_shipped) || truthyFlag(receipt.was_shipped);
 
-  // Prefer explicit tracking-status style fields when Etsy/partners include them.
+  const hints: string[] = [];
+  if (receiptStatus) hints.push(`status:${receiptStatus}`);
+  if (shipped) hints.push('shipped');
+  if (trackingNumber) hints.push(`tracking:${trackingNumber}`);
   for (const key of [
     'tracking_status',
     'trackingStatus',
-    'mail_status',
-    'mailStatus',
-    'shipment_status',
-    'shipmentStatus',
     'shipping_status',
     'shippingStatus',
-    'delivery_status',
-    'deliveryStatus',
-    'current_status',
-    'currentStatus',
-    'status',
-    'major_tracking_state',
-    'majorTrackingState',
+    'mail_status',
+    'mailStatus',
   ]) {
     const v = shipment[key] ?? receipt[key];
     if (typeof v === 'string' || typeof v === 'number') hints.push(String(v));
@@ -307,22 +306,30 @@ function shippingStatusFromReceipt(receipt: EtsyReceipt): {
 
   let fromText: EtsyShippingStatus | null = null;
   for (const hint of hints) {
-    fromText = parseEtsyShippingStatusText(hint);
-    if (fromText && fromText !== 'no_tracking') break;
-    if (fromText === 'no_tracking' && !trackingNumber) break;
+    const parsed = parseEtsyShippingStatusText(hint);
+    if (!parsed) continue;
+    // Prefer progressive shipping states over generic receipt "paid"/"open".
+    if (parsed !== 'no_tracking' || !trackingNumber) {
+      fromText = parsed;
+      if (parsed === 'cancelled' || parsed === 'delivered' || parsed === 'in_transit') {
+        break;
+      }
+    }
   }
 
-  const etsyStatusRaw = hints.filter(Boolean).slice(0, 6).join(' | ');
+  const etsyStatusRaw = hints.filter(Boolean).slice(0, 8).join(' | ');
 
+  // 1) Cancelled
   if (
     truthyFlag(receipt.is_canceled) ||
     truthyFlag(receipt.was_canceled) ||
     fromText === 'cancelled' ||
-    parseEtsyShippingStatusText(receiptStatus) === 'cancelled'
+    /cancel|refunded/i.test(receiptStatus)
   ) {
     return { status: 'cancelled', etsyStatusRaw, trackingNumber, carrier };
   }
 
+  // 2) Delivered
   if (
     truthyFlag(receipt.was_delivered) ||
     truthyFlag(receipt.is_delivered) ||
@@ -332,6 +339,7 @@ function shippingStatusFromReceipt(receipt: EtsyReceipt): {
     return { status: 'delivered', etsyStatusRaw, trackingNumber, carrier };
   }
 
+  // 3) Explicit In transit / Pre-transit from Etsy text fields
   if (fromText === 'in_transit') {
     return { status: 'in_transit', etsyStatusRaw, trackingNumber, carrier };
   }
@@ -339,13 +347,16 @@ function shippingStatusFromReceipt(receipt: EtsyReceipt): {
     return { status: 'pre_transit', etsyStatusRaw, trackingNumber, carrier };
   }
 
-  // No carrier-status text from API — approximate from tracking presence (Etsy UI).
+  // 4) No tracking number → No tracking (Etsy UI)
   if (!trackingNumber) {
     return { status: 'no_tracking', etsyStatusRaw, trackingNumber, carrier };
   }
 
-  // Has a tracking number but not delivered: Etsy usually starts at Pre-transit
-  // until the carrier scans (In transit). Public API often omits that scan state.
+  // 5) Has tracking, not delivered:
+  //    Shipped on Etsy → In transit; tracking present but not marked shipped → Pre-transit
+  if (shipped) {
+    return { status: 'in_transit', etsyStatusRaw, trackingNumber, carrier };
+  }
   return { status: 'pre_transit', etsyStatusRaw, trackingNumber, carrier };
 }
 

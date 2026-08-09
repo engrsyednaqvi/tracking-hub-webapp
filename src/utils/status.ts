@@ -30,6 +30,22 @@ const TONES: Record<OrderStatus, string> = {
   lost: 'bg-rose-100 text-rose-900',
 };
 
+/** Sort order matching Etsy shipping progress. */
+const STATUS_RANK: Record<string, number> = {
+  cancelled: 0,
+  no_tracking: 1,
+  waiting: 1,
+  pre_transit: 2,
+  processing: 2,
+  in_transit: 3,
+  out_for_delivery: 3,
+  delivered: 4,
+  exception: 5,
+  returned: 5,
+  failed_delivery: 5,
+  lost: 5,
+};
+
 /** Dashboard filter chips — match Etsy shipping statuses. */
 export const ORDER_FILTERS = [
   { id: 'all', label: 'All' },
@@ -54,20 +70,24 @@ export function statusHelp(status: OrderStatus): string {
   switch (status) {
     case 'no_tracking':
     case 'waiting':
-      return 'Etsy: No tracking — paid/open with no tracking number yet.';
+      return 'Etsy: No tracking';
     case 'pre_transit':
     case 'processing':
-      return 'Etsy: Pre-transit — tracking created, carrier has not started moving it yet.';
+      return 'Etsy: Pre-transit';
     case 'in_transit':
     case 'out_for_delivery':
-      return 'Etsy: In transit — carrier has accepted / is moving the package.';
+      return 'Etsy: In transit';
     case 'delivered':
-      return 'Etsy: Delivered — marked delivered or completed.';
+      return 'Etsy: Delivered';
     case 'cancelled':
-      return 'Etsy: Cancelled / fully refunded.';
+      return 'Etsy: Cancelled';
     default:
       return '';
   }
+}
+
+export function statusSortRank(status: OrderStatus): number {
+  return STATUS_RANK[status] ?? 99;
 }
 
 /** Normalize legacy statuses into Etsy buckets for filtering. */
