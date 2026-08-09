@@ -199,11 +199,17 @@ export interface EtsyReceipt {
   was_delivered?: boolean | number | string;
   is_canceled?: boolean | number | string;
   was_canceled?: boolean | number | string;
+  /** Set while fetching via Etsy was_shipped / was_delivered filters. */
+  _shippingBucket?: EtsyShippingStatus;
+  /** Open API cannot distinguish Pre-transit vs In transit — needs MC data. */
+  _needsMissionControl?: boolean;
   transactions?: Array<{
     title?: string;
     quantity?: number;
     listing_id?: number | string;
     listing_image_id?: number | string;
+    shipped_timestamp?: number;
+    expected_ship_date?: number;
   }>;
   shipments?: Array<Record<string, unknown>>;
   [key: string]: unknown;
@@ -213,64 +219,28 @@ function truthyFlag(value: unknown): boolean {
   return value === true || value === 1 || value === '1' || value === 'true';
 }
 
-function collectStrings(value: unknown, into: string[], depth = 0): void {
-  if (depth > 3 || value == null) return;
-  if (typeof value === 'string' || typeof value === 'number') {
-    into.push(String(value));
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) collectStrings(item, into, depth + 1);
-    return;
-  }
-  if (typeof value === 'object') {
-    for (const v of Object.values(value as Record<string, unknown>)) {
-      collectStrings(v, into, depth + 1);
-    }
-  }
-}
-
-/** Parse Etsy / carrier status text into our five shipping statuses. */
+/** Parse explicit Etsy shipping-status phrases only (no fuzzy carrier words). */
 export function parseEtsyShippingStatusText(raw: string): EtsyShippingStatus | null {
   const t = raw.toLowerCase().replace(/[_-]+/g, ' ').trim();
   if (!t) return null;
-  if (
-    t.includes('cancel') ||
-    t.includes('fully refunded') ||
-    t.includes('partially refunded')
-  ) {
+  if (/\bcancel(?:led|ed)?\b/.test(t) || t.includes('fully refunded')) {
     return 'cancelled';
   }
-  if (t.includes('deliver')) return 'delivered';
-  if (t.includes('pre transit') || t.includes('pretransit') || t.includes('label created')) {
+  if (/\bpre\s*transit\b/.test(t) || t.includes('label created')) {
     return 'pre_transit';
   }
-  if (
-    t.includes('in transit') ||
-    t.includes('out for delivery') ||
-    t.includes('accepted') ||
-    t.includes('departed') ||
-    t.includes('arrived') ||
-    t.includes('on the way')
-  ) {
+  if (/\bout\s*for\s*delivery\b/.test(t) || /\bin\s*transit\b/.test(t)) {
     return 'in_transit';
   }
-  if (
-    t.includes('no tracking') ||
-    t.includes('not shipped') ||
-    t === 'unshipped' ||
-    t === 'pending'
-  ) {
-    return 'no_tracking';
-  }
+  // Match delivered as a word — do NOT match random "deliver" substrings.
+  if (/\bdelivered\b/.test(t)) return 'delivered';
+  if (/\bno\s*tracking\b/.test(t)) return 'no_tracking';
   return null;
 }
 
 /**
- * Map receipt → Etsy seller-UI shipping labels using receipt flags only
- * (no external carrier APIs).
- *
- * Etsy UI: Cancelled | Delivered | In transit | Pre-transit | No tracking
+ * Map receipt → Etsy seller-UI shipping labels.
+ * Prefer the bucket from Etsy's was_shipped / was_delivered list filters.
  */
 function shippingStatusFromReceipt(receipt: EtsyReceipt): {
   status: EtsyShippingStatus;
@@ -286,79 +256,61 @@ function shippingStatusFromReceipt(receipt: EtsyReceipt): {
   const receiptStatus = String(receipt.status ?? '').trim();
   const shipped =
     truthyFlag(receipt.is_shipped) || truthyFlag(receipt.was_shipped);
+  const delivered =
+    truthyFlag(receipt.was_delivered) || truthyFlag(receipt.is_delivered);
 
-  const hints: string[] = [];
-  if (receiptStatus) hints.push(`status:${receiptStatus}`);
-  if (shipped) hints.push('shipped');
-  if (trackingNumber) hints.push(`tracking:${trackingNumber}`);
-  for (const key of [
-    'tracking_status',
-    'trackingStatus',
-    'shipping_status',
-    'shippingStatus',
-    'mail_status',
-    'mailStatus',
-  ]) {
-    const v = shipment[key] ?? receipt[key];
-    if (typeof v === 'string' || typeof v === 'number') hints.push(String(v));
-  }
-  collectStrings(shipment, hints);
+  const etsyStatusRaw = [
+    receiptStatus && `status:${receiptStatus}`,
+    shipped && 'is_shipped',
+    delivered && 'is_delivered',
+    trackingNumber ? 'has_tracking' : 'no_tracking_number',
+    receipt._shippingBucket && `bucket:${receipt._shippingBucket}`,
+    receipt._needsMissionControl && 'needs_mission_control',
+  ]
+    .filter(Boolean)
+    .join(' | ');
 
-  let fromText: EtsyShippingStatus | null = null;
-  for (const hint of hints) {
-    const parsed = parseEtsyShippingStatusText(hint);
-    if (!parsed) continue;
-    // Prefer progressive shipping states over generic receipt "paid"/"open".
-    if (parsed !== 'no_tracking' || !trackingNumber) {
-      fromText = parsed;
-      if (parsed === 'cancelled' || parsed === 'delivered' || parsed === 'in_transit') {
-        break;
-      }
-    }
-  }
-
-  const etsyStatusRaw = hints.filter(Boolean).slice(0, 8).join(' | ');
-
-  // 1) Cancelled
   if (
+    receipt._shippingBucket === 'cancelled' ||
     truthyFlag(receipt.is_canceled) ||
     truthyFlag(receipt.was_canceled) ||
-    fromText === 'cancelled' ||
     /cancel|fully refunded/i.test(receiptStatus)
   ) {
     return { status: 'cancelled', etsyStatusRaw, trackingNumber, carrier };
   }
 
-  // 2) Delivered — only real delivery flags (NOT receipt status "completed").
-  //    On Etsy, Completed orders still show Pre-transit / In transit / Delivered.
-  if (
-    truthyFlag(receipt.was_delivered) ||
-    truthyFlag(receipt.is_delivered) ||
-    fromText === 'delivered'
-  ) {
+  if (receipt._shippingBucket === 'delivered' || delivered) {
     return { status: 'delivered', etsyStatusRaw, trackingNumber, carrier };
   }
 
-  // 3) Explicit shipping text from Etsy when present
-  if (fromText === 'in_transit') {
-    return { status: 'in_transit', etsyStatusRaw, trackingNumber, carrier };
-  }
-  if (fromText === 'pre_transit') {
-    return { status: 'pre_transit', etsyStatusRaw, trackingNumber, carrier };
+  if (receipt._shippingBucket) {
+    return {
+      status: receipt._shippingBucket,
+      etsyStatusRaw,
+      trackingNumber,
+      carrier,
+    };
   }
 
-  // 4) No tracking number → No tracking
-  if (!trackingNumber) {
+  // Fallback if fetched without buckets
+  if (delivered) {
+    return { status: 'delivered', etsyStatusRaw, trackingNumber, carrier };
+  }
+  if (!trackingNumber && !shipped) {
     return { status: 'no_tracking', etsyStatusRaw, trackingNumber, carrier };
   }
-
-  // 5) Inside Completed (and other non-delivered) orders with tracking:
-  //    - tracking but not shipped yet → Pre-transit
-  //    - shipped / moving, not delivered → In transit
-  if (shipped) {
-    return { status: 'in_transit', etsyStatusRaw, trackingNumber, carrier };
+  if (trackingNumber && !shipped) {
+    return { status: 'pre_transit', etsyStatusRaw, trackingNumber, carrier };
   }
-  return { status: 'pre_transit', etsyStatusRaw, trackingNumber, carrier };
+  if (shipped && !delivered) {
+    return {
+      status: trackingNumber ? 'in_transit' : 'no_tracking',
+      etsyStatusRaw,
+      trackingNumber,
+      carrier,
+    };
+  }
+  return { status: 'no_tracking', etsyStatusRaw, trackingNumber, carrier };
 }
 
 async function fetchReceiptPage(
@@ -396,7 +348,20 @@ async function fetchReceiptPage(
   return all;
 }
 
-/** Paid + canceled receipts in the window (deduped). */
+function receiptTrackingNumber(receipt: EtsyReceipt): string {
+  const shipment = (receipt.shipments?.[0] ?? {}) as Record<string, unknown>;
+  return String(shipment.tracking_code ?? shipment.trackingCode ?? '').trim();
+}
+
+/**
+ * Fetch receipts in Etsy Open API filter buckets.
+ *
+ * Pre-transit vs In transit come from Mission Control
+ * (`majorTrackingState` via /shipments/by-order), not Open API.
+ * Shipped + tracked + not delivered is marked `_needsMissionControl` so sync
+ * can preserve a previously enriched status / default to Pre-transit (label
+ * created) until Mission Control data is applied.
+ */
 export async function fetchAllPaidReceipts(
   creds: {
     keystring: string;
@@ -406,17 +371,69 @@ export async function fetchAllPaidReceipts(
   },
   minCreated: number,
 ): Promise<EtsyReceipt[]> {
-  const [paid, canceled] = await Promise.all([
-    fetchReceiptPage(creds, { was_paid: 'true' }, minCreated),
-    fetchReceiptPage(creds, { was_canceled: 'true' }, minCreated).catch(() => [] as EtsyReceipt[]),
+  const [delivered, shippedNotDelivered, notShipped, canceled] = await Promise.all([
+    fetchReceiptPage(
+      creds,
+      { was_paid: 'true', was_delivered: 'true' },
+      minCreated,
+    ).catch(() => [] as EtsyReceipt[]),
+    fetchReceiptPage(
+      creds,
+      { was_paid: 'true', was_shipped: 'true', was_delivered: 'false' },
+      minCreated,
+    ).catch(() => [] as EtsyReceipt[]),
+    fetchReceiptPage(
+      creds,
+      { was_paid: 'true', was_shipped: 'false' },
+      minCreated,
+    ).catch(() => [] as EtsyReceipt[]),
+    fetchReceiptPage(creds, { was_canceled: 'true' }, minCreated).catch(
+      () => [] as EtsyReceipt[],
+    ),
   ]);
 
   const byId = new Map<string, EtsyReceipt>();
-  for (const r of [...paid, ...canceled]) {
+
+  // Lowest priority first; later buckets overwrite.
+  for (const r of notShipped) {
     const id = String(r.receipt_id ?? '');
     if (!id) continue;
-    byId.set(id, r);
+    // Tracking on file but Etsy still "not shipped" → Pre-transit.
+    const bucket: EtsyShippingStatus = receiptTrackingNumber(r)
+      ? 'pre_transit'
+      : 'no_tracking';
+    byId.set(id, { ...r, _shippingBucket: bucket });
   }
+
+  for (const r of shippedNotDelivered) {
+    const id = String(r.receipt_id ?? '');
+    if (!id) continue;
+    if (!receiptTrackingNumber(r)) {
+      byId.set(id, { ...r, _shippingBucket: 'no_tracking' });
+      continue;
+    }
+    // Ambiguous in Open API — Mission Control majorTrackingState decides.
+    // Default Pre-transit (label created / awaiting carrier), enrichment may
+    // upgrade to In transit.
+    byId.set(id, {
+      ...r,
+      _shippingBucket: 'pre_transit',
+      _needsMissionControl: true,
+    });
+  }
+
+  for (const r of delivered) {
+    const id = String(r.receipt_id ?? '');
+    if (!id) continue;
+    byId.set(id, { ...r, _shippingBucket: 'delivered' });
+  }
+
+  for (const r of canceled) {
+    const id = String(r.receipt_id ?? '');
+    if (!id) continue;
+    byId.set(id, { ...r, _shippingBucket: 'cancelled' });
+  }
+
   return [...byId.values()];
 }
 
@@ -431,6 +448,7 @@ export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
   etsyStatusRaw: string;
   createdAt: string;
   listingId: number | null;
+  needsMissionControl: boolean;
 } {
   const id = String(receipt.receipt_id ?? '').trim();
   const titles = (receipt.transactions ?? [])
@@ -462,6 +480,7 @@ export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
     etsyStatusRaw: mapped.etsyStatusRaw,
     createdAt,
     listingId,
+    needsMissionControl: Boolean(receipt._needsMissionControl),
   };
 }
 

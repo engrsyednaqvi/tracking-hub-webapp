@@ -3,7 +3,7 @@ import { Link2, Plus, RefreshCw, Store, Trash2 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useShops } from '@/context/ShopContext';
-import { startEtsyOAuth, syncEtsyOrders } from '@/lib/functions';
+import { applyEtsyShipmentsByOrder, startEtsyOAuth, syncEtsyOrders } from '@/lib/functions';
 import { createShop, deleteShop } from '@/services/shops';
 
 const ETSY_CALLBACK =
@@ -18,6 +18,8 @@ export function ShopsPage() {
   const [syncingId, setSyncingId] = useState<string | 'all' | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
+  const [shipmentsJson, setShipmentsJson] = useState('');
+  const [applyingTracking, setApplyingTracking] = useState(false);
 
   useEffect(() => {
     const etsy = searchParams.get('etsy');
@@ -87,6 +89,26 @@ export function ShopsPage() {
     }
   }
 
+  async function onApplyTrackingJson() {
+    if (demoMode || !user) return;
+    setApplyingTracking(true);
+    setFormError(null);
+    try {
+      const payload = JSON.parse(shipmentsJson) as unknown;
+      const result = await applyEtsyShipmentsByOrder(payload);
+      setBanner(
+        `Applied Mission Control tracking: ${result.updated} order(s) updated (${result.matched} in payload).`,
+      );
+      setShipmentsJson('');
+    } catch (err) {
+      setFormError(
+        err instanceof Error ? err.message : 'Could not apply tracking JSON',
+      );
+    } finally {
+      setApplyingTracking(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -139,6 +161,32 @@ export function ShopsPage() {
           ) until we migrate the extension to this same Firebase OAuth. Keystring/secret stay the
           same.
         </p>
+      </section>
+
+      <section className="rounded-2xl border border-surface-line bg-white p-4 shadow-sm">
+        <p className="font-medium text-slate-900">Pre-transit / In transit from Etsy</p>
+        <p className="mt-1 text-sm text-slate-600">
+          Etsy’s public API does not expose those statuses. Paste the JSON response from Network
+          for{' '}
+          <code className="text-xs">/api/v3/ajax/shop/…/shipments/by-order</code> (includes{' '}
+          <code className="text-xs">majorTrackingState</code>). Tip: filter Pre-transit, then In
+          transit, and paste each response.
+        </p>
+        <textarea
+          value={shipmentsJson}
+          onChange={(e) => setShipmentsJson(e.target.value)}
+          rows={6}
+          placeholder='{"shipments":[...],"ordersToShipments":{...}}'
+          className="mt-3 w-full rounded-xl border border-surface-line px-3 py-2 font-mono text-xs"
+        />
+        <button
+          type="button"
+          disabled={demoMode || applyingTracking || !shipmentsJson.trim()}
+          onClick={() => void onApplyTrackingJson()}
+          className="mt-3 inline-flex items-center gap-2 rounded-xl bg-brand px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
+        >
+          {applyingTracking ? 'Applying…' : 'Apply tracking statuses'}
+        </button>
       </section>
 
       <form

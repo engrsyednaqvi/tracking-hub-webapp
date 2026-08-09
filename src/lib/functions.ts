@@ -28,3 +28,16 @@ export async function syncEtsyOrders(input?: {
   const result = await callable(input ?? {});
   return result.data;
 }
+
+/** Apply Etsy Mission Control /shipments/by-order JSON (majorTrackingState). */
+export async function applyEtsyShipmentsByOrder(payload: unknown): Promise<{
+  updated: number;
+  matched: number;
+}> {
+  const callable = httpsCallable<
+    { payload: unknown },
+    { updated: number; matched: number }
+  >(functions(), 'etsyApplyShipmentsByOrder');
+  const result = await callable({ payload });
+  return result.data;
+}

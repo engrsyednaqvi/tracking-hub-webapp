@@ -17,6 +17,10 @@ import {
   refreshAccessToken,
   userIdFromAccessToken,
 } from './etsy/api';
+import {
+  statusesFromShipmentsByOrder,
+  type ShipmentsByOrderResponse,
+} from './etsy/missionControl';
 import { createCodeChallenge, createCodeVerifier, createOAuthState } from './etsy/pkce';
 
 // Gen2 can load modules more than once — always bind a default app.
@@ -314,13 +318,26 @@ export const etsySync = onCall(
         if (!existing.empty) {
           const docId = existing.docs[0]!.id;
           const prev = existing.docs[0]!;
+          const prevStatus = String(prev.get('status') ?? '');
+          // Open API cannot see Pre-transit vs In transit — keep Mission Control
+          // enrichment when the receipt is still in that ambiguous bucket.
+          const status =
+            fields.needsMissionControl &&
+            (prevStatus === 'pre_transit' || prevStatus === 'in_transit')
+              ? prevStatus
+              : fields.status;
+          const etsyStatusRaw =
+            status !== fields.status
+              ? `${fields.etsyStatusRaw} | preserved:${status}`
+              : fields.etsyStatusRaw;
           await ordersCol.doc(docId).set(
             {
               etsyOrderNumber: fields.etsyOrderNumber,
               customerName: fields.customerName,
               product: fields.product,
-              status: fields.status,
-              etsyStatusRaw: fields.etsyStatusRaw,
+              status,
+              etsyStatusRaw,
+              needsMissionControl: fields.needsMissionControl,
               trackingNumber: fields.trackingNumber || prev.get('trackingNumber') || '',
               carrier: fields.carrier || prev.get('carrier') || '',
               ...(imageUrl && !prev.get('imageUrl') ? { imageUrl } : {}),
@@ -341,6 +358,7 @@ export const etsySync = onCall(
             imageUrl: imageUrl ?? '',
             status: fields.status,
             etsyStatusRaw: fields.etsyStatusRaw,
+            needsMissionControl: fields.needsMissionControl,
             supplierName: '',
             supplierOrderNumber: '',
             trackingNumber: fields.trackingNumber,
@@ -361,3 +379,53 @@ export const etsySync = onCall(
     return { created, updated, shops: shopDocs.length, syncDays };
   },
 );
+
+/**
+ * Apply Mission Control /shipments/by-order JSON (majorTrackingState) onto orders.
+ * Paste the Network response from Etsy seller hub — OAuth cannot call that endpoint.
+ */
+export const etsyApplyShipmentsByOrder = onCall({ cors: true }, async (request) => {
+  if (!request.auth?.uid) {
+    throw new HttpsError('unauthenticated', 'Sign in first.');
+  }
+  const uid = request.auth.uid;
+  const payload = request.data?.payload as ShipmentsByOrderResponse | undefined;
+  if (!payload || typeof payload !== 'object') {
+    throw new HttpsError(
+      'invalid-argument',
+      'Send { payload } from Etsy /shipments/by-order JSON.',
+    );
+  }
+
+  const mapped = statusesFromShipmentsByOrder(payload);
+  if (!mapped.size) {
+    throw new HttpsError(
+      'invalid-argument',
+      'No order tracking statuses found in that payload.',
+    );
+  }
+
+  const ordersCol = db().collection('users').doc(uid).collection('orders');
+  let updated = 0;
+  const now = new Date().toISOString();
+
+  for (const [receiptId, info] of mapped) {
+    const existing = await ordersCol.where('etsyReceiptId', '==', receiptId).limit(1).get();
+    if (existing.empty) continue;
+    const doc = existing.docs[0]!;
+    await doc.ref.set(
+      {
+        status: info.status,
+        etsyStatusRaw: `mission_control | ${info.raw}`,
+        needsMissionControl: false,
+        ...(info.trackingNumber ? { trackingNumber: info.trackingNumber } : {}),
+        ...(info.carrier ? { carrier: info.carrier } : {}),
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+    updated += 1;
+  }
+
+  return { updated, matched: mapped.size };
+});
