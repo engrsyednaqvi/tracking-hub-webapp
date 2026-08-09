@@ -20,6 +20,8 @@ export interface Order {
   etsyReceiptId?: string;
   customerName: string;
   product: string;
+  /** Listing thumbnail from Etsy when available. */
+  imageUrl?: string;
   status: OrderStatus;
   supplierName: string;
   supplierOrderNumber: string;

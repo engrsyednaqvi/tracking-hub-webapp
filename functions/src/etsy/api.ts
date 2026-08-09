@@ -190,7 +190,12 @@ export interface EtsyReceipt {
   was_shipped?: boolean | number | string;
   is_delivered?: boolean | number | string;
   was_delivered?: boolean | number | string;
-  transactions?: Array<{ title?: string; quantity?: number }>;
+  transactions?: Array<{
+    title?: string;
+    quantity?: number;
+    listing_id?: number | string;
+    listing_image_id?: number | string;
+  }>;
   shipments?: Array<{ tracking_code?: string; carrier_name?: string }>;
 }
 
@@ -239,8 +244,9 @@ export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
   product: string;
   trackingNumber: string;
   carrier: string;
-  status: 'waiting' | 'in_transit' | 'delivered';
+  status: 'waiting' | 'processing' | 'in_transit' | 'delivered';
   createdAt: string;
+  listingId: number | null;
 } {
   const id = String(receipt.receipt_id ?? '').trim();
   const titles = (receipt.transactions ?? [])
@@ -251,9 +257,12 @@ export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
     })
     .filter(Boolean);
 
+  const shipment = receipt.shipments?.[0];
+  const trackingNumber = String(shipment?.tracking_code ?? '').trim();
+
   // Etsy often omits is_delivered; completed receipts are finished/delivered.
   const etsyStatus = String(receipt.status ?? '').toLowerCase().trim();
-  let status: 'waiting' | 'in_transit' | 'delivered' = 'waiting';
+  let status: 'waiting' | 'processing' | 'in_transit' | 'delivered' = 'waiting';
   if (
     truthyFlag(receipt.was_delivered) ||
     truthyFlag(receipt.is_delivered) ||
@@ -261,23 +270,43 @@ export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
   ) {
     status = 'delivered';
   } else if (truthyFlag(receipt.is_shipped) || truthyFlag(receipt.was_shipped)) {
-    status = 'in_transit';
+    // With tracking → in transit; shipped without tracking → pre-transit.
+    status = trackingNumber ? 'in_transit' : 'processing';
   }
 
   const unix = receipt.created_timestamp ?? receipt.create_timestamp;
   const createdAt =
     unix && unix > 0 ? new Date(unix * 1000).toISOString() : new Date().toISOString();
 
-  const shipment = receipt.shipments?.[0];
+  const listingRaw = receipt.transactions?.[0]?.listing_id;
+  const listingId =
+    listingRaw != null && Number.isFinite(Number(listingRaw)) ? Number(listingRaw) : null;
 
   return {
     etsyOrderNumber: id,
     etsyReceiptId: id,
     customerName: String(receipt.name ?? '').trim(),
     product: titles.join('; '),
-    trackingNumber: String(shipment?.tracking_code ?? '').trim(),
+    trackingNumber,
     carrier: String(shipment?.carrier_name ?? '').trim(),
     status,
     createdAt,
+    listingId,
   };
+}
+
+/** Fetch first listing thumbnail (cached per sync via caller). */
+export async function fetchListingImageUrl(
+  creds: { keystring: string; sharedSecret: string; accessToken: string },
+  listingId: number,
+): Promise<string | null> {
+  try {
+    const data = await etsyFetch<{
+      results?: Array<{ url_170x135?: string; url_75x75?: string; url_570xN?: string }>;
+    }>(creds, `/listings/${listingId}/images`);
+    const img = data.results?.[0];
+    return img?.url_170x135 || img?.url_75x75 || img?.url_570xN || null;
+  } catch {
+    return null;
+  }
 }

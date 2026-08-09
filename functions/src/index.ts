@@ -11,6 +11,7 @@ import {
   buildAuthorizeUrl,
   exchangeAuthorizationCode,
   fetchAllPaidReceipts,
+  fetchListingImageUrl,
   fetchPrimaryShop,
   mapReceiptToOrderFields,
   refreshAccessToken,
@@ -284,9 +285,25 @@ export const etsySync = onCall(
         minCreated,
       );
 
+      const imageCache = new Map<number, string | null>();
+
       for (const receipt of receipts) {
         const fields = mapReceiptToOrderFields(receipt);
         if (!fields.etsyReceiptId) continue;
+
+        let imageUrl: string | null = null;
+        if (fields.listingId) {
+          if (!imageCache.has(fields.listingId)) {
+            imageCache.set(
+              fields.listingId,
+              await fetchListingImageUrl(
+                { keystring, sharedSecret, accessToken },
+                fields.listingId,
+              ),
+            );
+          }
+          imageUrl = imageCache.get(fields.listingId) ?? null;
+        }
 
         const existing = await ordersCol
           .where('etsyReceiptId', '==', fields.etsyReceiptId)
@@ -296,17 +313,17 @@ export const etsySync = onCall(
         const now = new Date().toISOString();
         if (!existing.empty) {
           const docId = existing.docs[0]!.id;
+          const prev = existing.docs[0]!;
           await ordersCol.doc(docId).set(
             {
               etsyOrderNumber: fields.etsyOrderNumber,
               customerName: fields.customerName,
               product: fields.product,
               status: fields.status,
+              ...(imageUrl && !prev.get('imageUrl') ? { imageUrl } : {}),
               // Only fill tracking/carrier from Etsy when empty (don't clobber supplier edits)
-              ...(existing.docs[0]!.get('trackingNumber')
-                ? {}
-                : { trackingNumber: fields.trackingNumber }),
-              ...(existing.docs[0]!.get('carrier') ? {} : { carrier: fields.carrier }),
+              ...(prev.get('trackingNumber') ? {} : { trackingNumber: fields.trackingNumber }),
+              ...(prev.get('carrier') ? {} : { carrier: fields.carrier }),
               updatedAt: now,
             },
             { merge: true },
@@ -321,6 +338,7 @@ export const etsySync = onCall(
             etsyReceiptId: fields.etsyReceiptId,
             customerName: fields.customerName,
             product: fields.product,
+            imageUrl: imageUrl ?? '',
             status: fields.status,
             supplierName: '',
             supplierOrderNumber: '',

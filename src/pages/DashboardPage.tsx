@@ -1,32 +1,45 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Package, Plus, Truck, TriangleAlert } from 'lucide-react';
 import { AddOrderForm } from '@/components/orders/AddOrderForm';
 import { OrdersTable } from '@/components/orders/OrdersTable';
 import { useAuth } from '@/context/AuthContext';
 import { useShops } from '@/context/ShopContext';
+import { countForFilter, type OrderFilterId } from '@/utils/status';
 
 export function DashboardPage() {
   const { demoMode } = useAuth();
   const { activeShopId, activeShop, shops, filteredOrders, error } = useShops();
   const [showAdd, setShowAdd] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<OrderFilterId>('all');
 
   const scope =
     activeShopId === 'all'
       ? `All shops (${shops.length})`
       : activeShop?.name ?? 'Shop';
 
-  const inTransit = filteredOrders.filter((o) =>
-    ['in_transit', 'out_for_delivery', 'processing'].includes(o.status),
-  ).length;
-  const attention = filteredOrders.filter((o) =>
-    ['exception', 'failed_delivery', 'lost', 'returned'].includes(o.status),
-  ).length;
-
-  const stats = [
-    { label: 'Orders', value: String(filteredOrders.length), icon: Package },
-    { label: 'In transit', value: String(inTransit), icon: Truck },
-    { label: 'Needs attention', value: String(attention), icon: TriangleAlert },
-  ];
+  const stats = useMemo(
+    () => [
+      {
+        label: 'Orders',
+        value: String(filteredOrders.length),
+        icon: Package,
+        filter: 'all' as const,
+      },
+      {
+        label: 'In transit',
+        value: String(countForFilter(filteredOrders, 'in_transit')),
+        icon: Truck,
+        filter: 'in_transit' as const,
+      },
+      {
+        label: 'Unprocessed',
+        value: String(countForFilter(filteredOrders, 'unprocessed')),
+        icon: TriangleAlert,
+        filter: 'unprocessed' as const,
+      },
+    ],
+    [filteredOrders],
+  );
 
   return (
     <div className="space-y-6">
@@ -37,7 +50,7 @@ export function DashboardPage() {
           <p className="mt-2 max-w-2xl text-sm text-slate-600">
             {demoMode
               ? 'Demo mode — add Firebase config to enable sign-in and cloud sync.'
-              : 'Orders are stored in Firestore under your account. Shop switcher filters this list.'}
+              : 'Click a tracking number to open the carrier / 17TRACK page. Hover a status for what it means.'}
           </p>
           {error ? <p className="mt-2 text-sm text-rose-600">{error}</p> : null}
         </div>
@@ -59,21 +72,23 @@ export function DashboardPage() {
       ) : null}
 
       <section className="grid gap-3 sm:grid-cols-3">
-        {stats.map(({ label, value, icon: Icon }) => (
-          <div
+        {stats.map(({ label, value, icon: Icon, filter }) => (
+          <button
             key={label}
-            className="rounded-2xl border border-surface-line bg-white p-4 shadow-sm"
+            type="button"
+            onClick={() => setStatusFilter(filter)}
+            className="rounded-2xl border border-surface-line bg-white p-4 text-left shadow-sm transition hover:border-brand/40"
           >
             <div className="flex items-center justify-between">
               <span className="text-sm text-slate-500">{label}</span>
               <Icon className="h-4 w-4 text-brand" />
             </div>
             <p className="mt-2 text-2xl font-semibold text-slate-900">{value}</p>
-          </div>
+          </button>
         ))}
       </section>
 
-      <OrdersTable />
+      <OrdersTable statusFilter={statusFilter} onStatusFilterChange={setStatusFilter} />
     </div>
   );
 }
