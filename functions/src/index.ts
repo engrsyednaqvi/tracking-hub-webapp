@@ -18,9 +18,8 @@ import {
 } from './etsy/api';
 import { createCodeChallenge, createCodeVerifier, createOAuthState } from './etsy/pkce';
 
-function ensureApp() {
-  if (!getApps().length) initializeApp();
-}
+// Gen2 can load modules more than once — always bind a default app.
+const adminApp = getApps()[0] ?? initializeApp();
 
 const etsyKeystring = defineSecret('ETSY_KEYSTRING');
 const etsySharedSecret = defineSecret('ETSY_SHARED_SECRET');
@@ -32,8 +31,7 @@ const REDIRECT_URI =
   'https://us-central1-tracking-hub-webapp-29401.cloudfunctions.net/etsyOAuthCallback';
 
 function db() {
-  ensureApp();
-  return getFirestore();
+  return getFirestore(adminApp);
 }
 
 function createId(prefix: string): string {

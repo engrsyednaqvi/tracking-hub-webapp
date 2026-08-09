@@ -61,7 +61,12 @@ export function ShopsPage() {
       const { authUrl } = await startEtsyOAuth();
       window.location.assign(authUrl);
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Could not start Etsy connect');
+      const anyErr = err as { message?: string; code?: string; details?: unknown };
+      setFormError(
+        anyErr?.message ||
+          (typeof anyErr?.code === 'string' ? anyErr.code : null) ||
+          'Could not start Etsy connect',
+      );
       setBusy(false);
     }
   }
