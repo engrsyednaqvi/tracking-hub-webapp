@@ -17,6 +17,7 @@ export interface Order {
   id: string;
   shopId: string;
   etsyOrderNumber: string;
+  etsyReceiptId?: string;
   customerName: string;
   product: string;
   status: OrderStatus;

@@ -8,3 +8,5 @@ dist-ssr
 !.env.example
 .firebase
 *.log
+functions/lib
+functions/.secret*

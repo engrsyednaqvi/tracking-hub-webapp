@@ -4,9 +4,11 @@ export interface Shop {
   id: string;
   name: string;
   platform: ShopPlatform;
-  /** True once Etsy OAuth is wired and tokens are stored. */
+  /** True once Etsy OAuth tokens are stored (server-side). */
   connected: boolean;
   etsyShopId?: string | null;
+  etsyUserId?: string | null;
+  lastSyncAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }

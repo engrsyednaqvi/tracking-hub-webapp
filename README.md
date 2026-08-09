@@ -60,11 +60,34 @@ users/{uid}/shops/{shopId}
 users/{uid}/orders/{orderId}   # includes shopId for filtering
 ```
 
+## Etsy connect (same developer app as the extension)
+
+1. Upgrade the Firebase project to **Blaze** (required for Cloud Functions; free quota is usually enough).
+2. Set secrets and deploy:
+
+   ```bash
+   npx firebase login
+   npx firebase use tracking-hub-webapp-29401
+   npx firebase functions:secrets:set ETSY_KEYSTRING
+   npx firebase functions:secrets:set ETSY_SHARED_SECRET
+   npx firebase functions:config:unset unused 2>nul
+   npx firebase deploy --only functions,firestore:rules
+   ```
+
+3. In [Etsy Developers](https://www.etsy.com/developers/your-apps), set **Callback URL** to exactly:
+
+   `https://us-central1-tracking-hub-webapp-29401.cloudfunctions.net/etsyOAuthCallback`
+
+   (Etsy allows one callback per app — this replaces the extension `chromiumapp.org` URL until the extension is migrated to Firebase OAuth.)
+
+4. Auth → Authorized domains: keep `localhost` and `engrsyednaqvi.github.io`.
+5. On the live site → **Shops** → **Connect Etsy** → **Sync**.
+
 ## Next
 
-- Etsy OAuth via Cloud Functions
+- Migrate extension OAuth to the same Firebase callback
 - Tracking refresh jobs
-- Extension sync against the same Firestore account
+- Multi-account Etsy shops per user
 
 ## Related
 
