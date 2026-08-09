@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { initializeApp } from 'firebase-admin/app';
+import { getApps, initializeApp } from 'firebase-admin/app';
 import {
   FieldValue,
   getFirestore,
@@ -18,7 +18,9 @@ import {
 } from './etsy/api';
 import { createCodeChallenge, createCodeVerifier, createOAuthState } from './etsy/pkce';
 
-initializeApp();
+function ensureApp() {
+  if (!getApps().length) initializeApp();
+}
 
 const etsyKeystring = defineSecret('ETSY_KEYSTRING');
 const etsySharedSecret = defineSecret('ETSY_SHARED_SECRET');
@@ -26,10 +28,11 @@ const webappOrigin = defineString('WEBAPP_ORIGIN', {
   default: 'https://engrsyednaqvi.github.io/tracking-hub-webapp',
 });
 
-const PROJECT_ID = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || 'tracking-hub-webapp-29401';
-const REDIRECT_URI = `https://us-central1-${PROJECT_ID}.cloudfunctions.net/etsyOAuthCallback`;
+const REDIRECT_URI =
+  'https://us-central1-tracking-hub-webapp-29401.cloudfunctions.net/etsyOAuthCallback';
 
 function db() {
+  ensureApp();
   return getFirestore();
 }
 
