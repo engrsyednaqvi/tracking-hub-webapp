@@ -115,6 +115,7 @@ export const etsyOAuthCallback = onRequest(
       const sharedSecret = etsySharedSecret.value();
       const token = await exchangeAuthorizationCode({
         keystring,
+        sharedSecret,
         code,
         codeVerifier: session.codeVerifier,
         redirectUri: REDIRECT_URI,
@@ -214,6 +215,7 @@ async function ensureAccessToken(
 
   const token = await refreshAccessToken({
     keystring,
+    sharedSecret,
     refreshToken: cred.refreshToken,
   });
   const expiresAt = Date.now() + Math.max(60, token.expires_in - 60) * 1000;

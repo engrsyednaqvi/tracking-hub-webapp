@@ -28,10 +28,17 @@ export function buildAuthorizeUrl(params: {
   return url.toString();
 }
 
-async function postToken(body: Record<string, string>): Promise<TokenResponse> {
+async function postToken(
+  creds: { keystring: string; sharedSecret: string },
+  body: Record<string, string>,
+): Promise<TokenResponse> {
+  // Etsy requires x-api-key as keystring:shared_secret on all API/token requests (enforced 2026).
   const response = await fetch(TOKEN_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'x-api-key': `${creds.keystring}:${creds.sharedSecret}`,
+    },
     body: new URLSearchParams(body).toString(),
   });
   if (!response.ok) {
@@ -43,28 +50,36 @@ async function postToken(body: Record<string, string>): Promise<TokenResponse> {
 
 export async function exchangeAuthorizationCode(params: {
   keystring: string;
+  sharedSecret: string;
   code: string;
   codeVerifier: string;
   redirectUri: string;
 }): Promise<TokenResponse> {
-  return postToken({
-    grant_type: 'authorization_code',
-    client_id: params.keystring,
-    redirect_uri: params.redirectUri,
-    code: params.code,
-    code_verifier: params.codeVerifier,
-  });
+  return postToken(
+    { keystring: params.keystring, sharedSecret: params.sharedSecret },
+    {
+      grant_type: 'authorization_code',
+      client_id: params.keystring,
+      redirect_uri: params.redirectUri,
+      code: params.code,
+      code_verifier: params.codeVerifier,
+    },
+  );
 }
 
 export async function refreshAccessToken(params: {
   keystring: string;
+  sharedSecret: string;
   refreshToken: string;
 }): Promise<TokenResponse> {
-  return postToken({
-    grant_type: 'refresh_token',
-    client_id: params.keystring,
-    refresh_token: params.refreshToken,
-  });
+  return postToken(
+    { keystring: params.keystring, sharedSecret: params.sharedSecret },
+    {
+      grant_type: 'refresh_token',
+      client_id: params.keystring,
+      refresh_token: params.refreshToken,
+    },
+  );
 }
 
 export function userIdFromAccessToken(accessToken: string): string {
