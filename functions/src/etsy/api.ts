@@ -182,14 +182,20 @@ export interface EtsyReceipt {
   state?: string;
   zip?: string;
   country_iso?: string;
+  /** Etsy order status: paid | completed | open | payment processing | canceled | … */
+  status?: string;
   created_timestamp?: number;
   create_timestamp?: number;
-  is_shipped?: boolean;
-  was_shipped?: boolean;
-  is_delivered?: boolean;
-  was_delivered?: boolean;
+  is_shipped?: boolean | number | string;
+  was_shipped?: boolean | number | string;
+  is_delivered?: boolean | number | string;
+  was_delivered?: boolean | number | string;
   transactions?: Array<{ title?: string; quantity?: number }>;
   shipments?: Array<{ tracking_code?: string; carrier_name?: string }>;
+}
+
+function truthyFlag(value: unknown): boolean {
+  return value === true || value === 1 || value === '1' || value === 'true';
 }
 
 export async function fetchAllPaidReceipts(
@@ -245,9 +251,18 @@ export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
     })
     .filter(Boolean);
 
+  // Etsy often omits is_delivered; completed receipts are finished/delivered.
+  const etsyStatus = String(receipt.status ?? '').toLowerCase().trim();
   let status: 'waiting' | 'in_transit' | 'delivered' = 'waiting';
-  if (receipt.was_delivered || receipt.is_delivered) status = 'delivered';
-  else if (receipt.is_shipped || receipt.was_shipped) status = 'in_transit';
+  if (
+    truthyFlag(receipt.was_delivered) ||
+    truthyFlag(receipt.is_delivered) ||
+    etsyStatus === 'completed'
+  ) {
+    status = 'delivered';
+  } else if (truthyFlag(receipt.is_shipped) || truthyFlag(receipt.was_shipped)) {
+    status = 'in_transit';
+  }
 
   const unix = receipt.created_timestamp ?? receipt.create_timestamp;
   const createdAt =
