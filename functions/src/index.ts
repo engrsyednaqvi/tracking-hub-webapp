@@ -16,18 +16,22 @@ import {
   mapReceiptToOrderFields,
   refreshAccessToken,
   userIdFromAccessToken,
+  type EtsyShippingStatus,
 } from './etsy/api';
 import {
   statusesFromShipmentsByOrder,
   type ShipmentsByOrderResponse,
 } from './etsy/missionControl';
 import { createCodeChallenge, createCodeVerifier, createOAuthState } from './etsy/pkce';
+import { fetchUspsTrackingStatus } from './usps/tracking';
 
 // Gen2 can load modules more than once — always bind a default app.
 const adminApp = getApps()[0] ?? initializeApp();
 
 const etsyKeystring = defineSecret('ETSY_KEYSTRING');
 const etsySharedSecret = defineSecret('ETSY_SHARED_SECRET');
+const uspsConsumerKey = defineSecret('USPS_CONSUMER_KEY');
+const uspsConsumerSecret = defineSecret('USPS_CONSUMER_SECRET');
 const webappOrigin = defineString('WEBAPP_ORIGIN', {
   default: 'https://engrsyednaqvi.github.io/tracking-hub-webapp',
 });
@@ -238,7 +242,11 @@ async function ensureAccessToken(
 
 /** Sync paid receipts for one shop (or all connected shops). */
 export const etsySync = onCall(
-  { secrets: [etsyKeystring, etsySharedSecret], cors: true, timeoutSeconds: 300 },
+  {
+    secrets: [etsyKeystring, etsySharedSecret, uspsConsumerKey, uspsConsumerSecret],
+    cors: true,
+    timeoutSeconds: 300,
+  },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Sign in first.');
@@ -251,6 +259,10 @@ export const etsySync = onCall(
     );
     const keystring = etsyKeystring.value();
     const sharedSecret = etsySharedSecret.value();
+    const uspsCreds = {
+      consumerKey: uspsConsumerKey.value(),
+      consumerSecret: uspsConsumerSecret.value(),
+    };
 
     const shopsCol = db().collection('users').doc(uid).collection('shops');
     let shopDocs: QueryDocumentSnapshot[];
@@ -271,6 +283,9 @@ export const etsySync = onCall(
     const ordersCol = db().collection('users').doc(uid).collection('orders');
     let created = 0;
     let updated = 0;
+    let uspsEnriched = 0;
+    let uspsSkipped = 0;
+    let uspsError: string | null = null;
 
     for (const shopDoc of shopDocs) {
       const { accessToken, etsyShopId } = await ensureAccessToken(
@@ -290,10 +305,46 @@ export const etsySync = onCall(
       );
 
       const imageCache = new Map<number, string | null>();
+      const uspsCache = new Map<string, Awaited<ReturnType<typeof fetchUspsTrackingStatus>>>();
 
       for (const receipt of receipts) {
         const fields = mapReceiptToOrderFields(receipt);
         if (!fields.etsyReceiptId) continue;
+
+        let status: EtsyShippingStatus = fields.status;
+        let etsyStatusRaw = fields.etsyStatusRaw;
+
+        // Refine Pre-transit / In transit / Delivered via USPS when possible.
+        if (
+          fields.trackingNumber &&
+          (status === 'pre_transit' || status === 'in_transit' || status === 'delivered')
+        ) {
+          try {
+            const cacheKey = fields.trackingNumber.replace(/\s+/g, '');
+            let usps = uspsCache.get(cacheKey);
+            if (usps === undefined) {
+              usps = await fetchUspsTrackingStatus(
+                uspsCreds,
+                fields.trackingNumber,
+                fields.carrier,
+              );
+              uspsCache.set(cacheKey, usps);
+              // Gentle pacing for USPS ~60/hour default quota.
+              await new Promise((r) => setTimeout(r, 200));
+            }
+            if (usps?.status) {
+              status = usps.status;
+              etsyStatusRaw = [fields.etsyStatusRaw, usps.raw].filter(Boolean).join(' | ');
+              uspsEnriched += 1;
+            } else if (usps === null) {
+              uspsSkipped += 1;
+            }
+          } catch (err) {
+            uspsError =
+              err instanceof Error ? err.message.slice(0, 240) : 'USPS tracking lookup failed';
+            uspsSkipped += 1;
+          }
+        }
 
         let imageUrl: string | null = null;
         if (fields.listingId) {
@@ -323,10 +374,13 @@ export const etsySync = onCall(
               etsyOrderNumber: fields.etsyOrderNumber,
               customerName: fields.customerName,
               product: fields.product,
-              status: fields.status,
-              etsyStatusRaw: fields.etsyStatusRaw,
+              status,
+              etsyStatusRaw,
               trackingNumber: fields.trackingNumber || prev.get('trackingNumber') || '',
               carrier: fields.carrier || prev.get('carrier') || '',
+              ...(fields.dispatchedAt
+                ? { dispatchedAt: fields.dispatchedAt }
+                : {}),
               ...(imageUrl && !prev.get('imageUrl') ? { imageUrl } : {}),
               updatedAt: now,
             },
@@ -343,12 +397,13 @@ export const etsySync = onCall(
             customerName: fields.customerName,
             product: fields.product,
             imageUrl: imageUrl ?? '',
-            status: fields.status,
-            etsyStatusRaw: fields.etsyStatusRaw,
+            status,
+            etsyStatusRaw,
             supplierName: '',
             supplierOrderNumber: '',
             trackingNumber: fields.trackingNumber,
             carrier: fields.carrier,
+            ...(fields.dispatchedAt ? { dispatchedAt: fields.dispatchedAt } : {}),
             createdAt: fields.createdAt,
             updatedAt: now,
           });
@@ -362,7 +417,15 @@ export const etsySync = onCall(
       );
     }
 
-    return { created, updated, shops: shopDocs.length, syncDays };
+    return {
+      created,
+      updated,
+      shops: shopDocs.length,
+      syncDays,
+      uspsEnriched,
+      uspsSkipped,
+      uspsError,
+    };
   },
 );
 

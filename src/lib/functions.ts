@@ -20,10 +20,26 @@ export async function startEtsyOAuth(): Promise<{ authUrl: string; redirectUri: 
 export async function syncEtsyOrders(input?: {
   shopId?: string;
   syncDays?: number;
-}): Promise<{ created: number; updated: number; shops: number; syncDays: number }> {
+}): Promise<{
+  created: number;
+  updated: number;
+  shops: number;
+  syncDays: number;
+  uspsEnriched?: number;
+  uspsSkipped?: number;
+  uspsError?: string | null;
+}> {
   const callable = httpsCallable<
     { shopId?: string; syncDays?: number },
-    { created: number; updated: number; shops: number; syncDays: number }
+    {
+      created: number;
+      updated: number;
+      shops: number;
+      syncDays: number;
+      uspsEnriched?: number;
+      uspsSkipped?: number;
+      uspsError?: string | null;
+    }
   >(functions(), 'etsySync');
   const result = await callable(input ?? {});
   return result.data;

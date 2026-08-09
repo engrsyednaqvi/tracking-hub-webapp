@@ -77,8 +77,13 @@ export function ShopsPage() {
     setFormError(null);
     try {
       const result = await syncEtsyOrders({ shopId, syncDays: 30 });
+      const uspsBit =
+        typeof result.uspsEnriched === 'number'
+          ? ` · USPS refined ${result.uspsEnriched}`
+          : '';
+      const uspsErr = result.uspsError ? ` · USPS: ${result.uspsError}` : '';
       setBanner(
-        `Synced ${result.shops} shop(s): ${result.created} new, ${result.updated} updated (last ${result.syncDays} days).`,
+        `Synced ${result.shops} shop(s): ${result.created} new, ${result.updated} updated (last ${result.syncDays} days)${uspsBit}${uspsErr}.`,
       );
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Sync failed');

@@ -5,14 +5,12 @@ import {
   ArrowUpDown,
   ExternalLink,
   Package,
-  Printer,
   Trash2,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useShops } from '@/context/ShopContext';
 import { deleteOrder } from '@/services/orders';
 import { formatOrderDate } from '@/utils/date';
-import { etsyShippingLabelUrl } from '@/utils/etsyLinks';
 import {
   countForFilter,
   ORDER_FILTERS,
@@ -27,7 +25,7 @@ import { buildTrackingUrl } from '@/utils/trackingUrl';
 import { cn } from '@/lib/cn';
 import type { Order } from '@/types';
 
-type SortKey = 'date' | 'status';
+type SortKey = 'date' | 'status' | 'dispatched';
 type SortDir = 'asc' | 'desc';
 
 export function OrdersTable({
@@ -52,12 +50,22 @@ export function OrdersTable({
         if (ta !== tb) return (ta - tb) * dir;
         return (statusSortRank(a.status) - statusSortRank(b.status)) * dir;
       }
+      if (sortKey === 'dispatched') {
+        const ta = new Date(a.dispatchedAt ?? 0).getTime() || 0;
+        const tb = new Date(b.dispatchedAt ?? 0).getTime() || 0;
+        // Empty dispatch dates sort last in both directions.
+        if (!ta && !tb) return 0;
+        if (!ta) return 1;
+        if (!tb) return -1;
+        if (ta !== tb) return (ta - tb) * dir;
+        return (new Date(b.createdAt).getTime() || 0) - (new Date(a.createdAt).getTime() || 0);
+      }
       const sa = statusSortRank(a.status);
       const sb = statusSortRank(b.status);
       if (sa !== sb) return (sa - sb) * dir;
       const ta = new Date(a.createdAt).getTime() || 0;
       const tb = new Date(b.createdAt).getTime() || 0;
-      return (tb - ta); // newest first as tie-breaker when sorting by status
+      return tb - ta; // newest first as tie-breaker when sorting by status
     });
   }, [filteredOrders, statusFilter, sortKey, sortDir]);
 
@@ -67,7 +75,7 @@ export function OrdersTable({
       return;
     }
     setSortKey(key);
-    setSortDir(key === 'date' ? 'desc' : 'asc');
+    setSortDir(key === 'status' ? 'asc' : 'desc');
   }
 
   if (loading) {
@@ -135,7 +143,14 @@ export function OrdersTable({
                   />
                 </th>
                 <th className="px-3 py-2.5 font-medium">Tracking</th>
-                <th className="px-3 py-2.5 font-medium">Label</th>
+                <th className="px-3 py-2.5 font-medium">
+                  <SortButton
+                    label="Dispatched"
+                    active={sortKey === 'dispatched'}
+                    dir={sortDir}
+                    onClick={() => toggleSort('dispatched')}
+                  />
+                </th>
                 <th className="px-3 py-2.5 font-medium" />
               </tr>
             </thead>
@@ -196,9 +211,7 @@ function OrderRow({
   onDelete: () => void;
 }) {
   const trackUrl = buildTrackingUrl(order.trackingNumber, order.carrier);
-  const labelUrl = etsyShippingLabelUrl(order);
   const help = statusHelp(order.status);
-  const hasEtsyLabel = Boolean(order.etsyShippingLabelId || order.trackingNumber);
 
   return (
     <tr className="border-b border-surface-line/70 last:border-0">
@@ -259,21 +272,8 @@ function OrderRow({
         )}
         {order.carrier ? <p className="text-xs text-slate-400">{order.carrier}</p> : null}
       </td>
-      <td className="px-3 py-2.5">
-        {labelUrl && hasEtsyLabel ? (
-          <a
-            href={labelUrl}
-            target="_blank"
-            rel="noreferrer"
-            title="Opens Etsy order (stay logged in) → Download Shipping Label PDF"
-            className="inline-flex items-center gap-1 font-medium text-brand hover:underline"
-          >
-            <Printer className="h-3.5 w-3.5 shrink-0" />
-            Etsy
-          </a>
-        ) : (
-          <span className="text-slate-400">—</span>
-        )}
+      <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">
+        {formatOrderDate(order.dispatchedAt)}
       </td>
       <td className="px-3 py-2.5 text-right">
         {canDelete ? (

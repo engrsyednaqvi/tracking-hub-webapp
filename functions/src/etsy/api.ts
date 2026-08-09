@@ -424,6 +424,27 @@ export async function fetchAllPaidReceipts(
   return [...byId.values()];
 }
 
+/** Latest ship/dispatch instant from receipt transactions + shipments. */
+export function receiptDispatchedAt(receipt: EtsyReceipt): string | null {
+  const candidates: number[] = [];
+  for (const t of receipt.transactions ?? []) {
+    const ts = Number(t.shipped_timestamp ?? 0);
+    if (Number.isFinite(ts) && ts > 0) candidates.push(ts);
+  }
+  for (const shipment of receipt.shipments ?? []) {
+    const ts = Number(
+      shipment.shipment_notification_timestamp ??
+        shipment.shipmentNotificationTimestamp ??
+        shipment.mailing_date ??
+        shipment.mailingDate ??
+        0,
+    );
+    if (Number.isFinite(ts) && ts > 0) candidates.push(ts);
+  }
+  if (!candidates.length) return null;
+  return new Date(Math.max(...candidates) * 1000).toISOString();
+}
+
 export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
   etsyOrderNumber: string;
   etsyReceiptId: string;
@@ -434,6 +455,7 @@ export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
   status: EtsyShippingStatus;
   etsyStatusRaw: string;
   createdAt: string;
+  dispatchedAt: string | null;
   listingId: number | null;
 } {
   const id = String(receipt.receipt_id ?? '').trim();
@@ -465,6 +487,7 @@ export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
     status: mapped.status,
     etsyStatusRaw: mapped.etsyStatusRaw,
     createdAt,
+    dispatchedAt: receiptDispatchedAt(receipt),
     listingId,
   };
 }

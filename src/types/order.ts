@@ -36,6 +36,8 @@ export interface Order {
   /** Etsy postage label id when purchased via Etsy Shipping. */
   etsyShippingLabelId?: string;
   etsyShipmentId?: string;
+  /** Latest ship/dispatch time from Etsy (shipped_timestamp / shipment notification). */
+  dispatchedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
