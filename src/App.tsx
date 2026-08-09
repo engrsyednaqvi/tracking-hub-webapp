@@ -36,7 +36,7 @@ export default function App() {
     <Routes>
       <Route
         path="/login"
-        element={user && !demoMode ? <Navigate to="/" replace /> : <LoginPage />}
+        element={demoMode || user ? <Navigate to="/" replace /> : <LoginPage />}
       />
       <Route
         element={
