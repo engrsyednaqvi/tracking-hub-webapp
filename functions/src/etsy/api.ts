@@ -28,6 +28,22 @@ export function buildAuthorizeUrl(params: {
   return url.toString();
 }
 
+/** Trim secrets — Secret Manager / piping often leaves trailing newlines that break Headers. */
+function cleanCreds(creds: { keystring: string; sharedSecret: string }): {
+  keystring: string;
+  sharedSecret: string;
+} {
+  return {
+    keystring: creds.keystring.trim(),
+    sharedSecret: creds.sharedSecret.trim(),
+  };
+}
+
+function etsyApiKeyHeader(creds: { keystring: string; sharedSecret: string }): string {
+  const { keystring, sharedSecret } = cleanCreds(creds);
+  return `${keystring}:${sharedSecret}`;
+}
+
 async function postToken(
   creds: { keystring: string; sharedSecret: string },
   body: Record<string, string>,
@@ -37,7 +53,7 @@ async function postToken(
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
-      'x-api-key': `${creds.keystring}:${creds.sharedSecret}`,
+      'x-api-key': etsyApiKeyHeader(creds),
     },
     body: new URLSearchParams(body).toString(),
   });
@@ -55,11 +71,12 @@ export async function exchangeAuthorizationCode(params: {
   codeVerifier: string;
   redirectUri: string;
 }): Promise<TokenResponse> {
+  const { keystring, sharedSecret } = cleanCreds(params);
   return postToken(
-    { keystring: params.keystring, sharedSecret: params.sharedSecret },
+    { keystring, sharedSecret },
     {
       grant_type: 'authorization_code',
-      client_id: params.keystring,
+      client_id: keystring,
       redirect_uri: params.redirectUri,
       code: params.code,
       code_verifier: params.codeVerifier,
@@ -72,11 +89,12 @@ export async function refreshAccessToken(params: {
   sharedSecret: string;
   refreshToken: string;
 }): Promise<TokenResponse> {
+  const { keystring, sharedSecret } = cleanCreds(params);
   return postToken(
-    { keystring: params.keystring, sharedSecret: params.sharedSecret },
+    { keystring, sharedSecret },
     {
       grant_type: 'refresh_token',
-      client_id: params.keystring,
+      client_id: keystring,
       refresh_token: params.refreshToken,
     },
   );
@@ -90,11 +108,12 @@ async function etsyFetch<T>(
   creds: { keystring: string; sharedSecret: string; accessToken: string },
   path: string,
 ): Promise<T> {
+  const clean = cleanCreds(creds);
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
       Accept: 'application/json',
-      'x-api-key': `${creds.keystring}:${creds.sharedSecret}`,
-      Authorization: `Bearer ${creds.accessToken}`,
+      'x-api-key': etsyApiKeyHeader(clean),
+      Authorization: `Bearer ${creds.accessToken.trim()}`,
     },
   });
   if (!response.ok) {

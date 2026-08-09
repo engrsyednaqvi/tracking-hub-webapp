@@ -55,7 +55,7 @@ export const etsyOAuthStart = onCall(
       throw new HttpsError('unauthenticated', 'Sign in first.');
     }
 
-    const keystring = etsyKeystring.value();
+    const keystring = etsyKeystring.value().trim();
     const codeVerifier = createCodeVerifier();
     const codeChallenge = createCodeChallenge(codeVerifier);
     const state = createOAuthState();
@@ -120,8 +120,8 @@ export const etsyOAuthCallback = onRequest(
         return;
       }
 
-      const keystring = etsyKeystring.value();
-      const sharedSecret = etsySharedSecret.value();
+      const keystring = etsyKeystring.value().trim();
+      const sharedSecret = etsySharedSecret.value().trim();
       const token = await exchangeAuthorizationCode({
         keystring,
         sharedSecret,
@@ -272,11 +272,11 @@ export const etsySync = onCall(
       365,
       Math.max(1, Number(request.data?.syncDays ?? 30) || 30),
     );
-    const keystring = etsyKeystring.value();
-    const sharedSecret = etsySharedSecret.value();
+    const keystring = etsyKeystring.value().trim();
+    const sharedSecret = etsySharedSecret.value().trim();
     const uspsCreds = {
-      consumerKey: uspsConsumerKey.value(),
-      consumerSecret: uspsConsumerSecret.value(),
+      consumerKey: uspsConsumerKey.value().trim(),
+      consumerSecret: uspsConsumerSecret.value().trim(),
     };
 
     const shopsCol = db().collection('users').doc(uid).collection('shops');
