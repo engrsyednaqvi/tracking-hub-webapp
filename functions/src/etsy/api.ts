@@ -126,51 +126,81 @@ export async function fetchPrimaryShop(creds: {
   accessToken: string;
   userId?: string;
 }): Promise<{ shopId: number; shopName: string; userId?: string }> {
+  const all = await fetchAllShopsForUser(creds);
+  if (!all.length) {
+    throw new Error('No Etsy shop found for this account.');
+  }
+  return all[0]!;
+}
+
+/** All shops owned by the connected Etsy user (deduped by shopId). */
+export async function fetchAllShopsForUser(creds: {
+  keystring: string;
+  sharedSecret: string;
+  accessToken: string;
+  userId?: string;
+}): Promise<Array<{ shopId: number; shopName: string; userId?: string }>> {
+  const byId = new Map<number, { shopId: number; shopName: string; userId?: string }>();
+
+  const add = (shopId: number | null, shopName: string, userId?: string) => {
+    if (!shopId || byId.has(shopId)) return;
+    byId.set(shopId, { shopId, shopName: shopName || `Shop ${shopId}`, userId });
+  };
+
+  let resolvedUserId = creds.userId;
+
   try {
     const me = await etsyFetch<{ user_id?: string | number; shop_id?: string | number | null }>(
       creds,
       '/users/me',
     );
-    const shopId = toShopId(me.shop_id);
-    const userId = me.user_id != null ? String(me.user_id) : undefined;
-    if (shopId) {
+    resolvedUserId = me.user_id != null ? String(me.user_id) : resolvedUserId;
+    const primaryId = toShopId(me.shop_id);
+    if (primaryId) {
       try {
-        const shop = await etsyFetch<{ shop_name?: string }>(creds, `/shops/${shopId}`);
-        return { shopId, shopName: shop.shop_name ?? `Shop ${shopId}`, userId };
+        const shop = await etsyFetch<{ shop_name?: string }>(creds, `/shops/${primaryId}`);
+        add(primaryId, shop.shop_name ?? `Shop ${primaryId}`, resolvedUserId);
       } catch {
-        return { shopId, shopName: `Shop ${shopId}`, userId };
-      }
-    }
-    if (userId) {
-      const byOwner = await etsyFetch<unknown>(creds, `/users/${userId}/shops`);
-      const shop = pickShop(byOwner);
-      const ownerShopId = toShopId(shop?.shop_id);
-      if (ownerShopId) {
-        return {
-          shopId: ownerShopId,
-          shopName: shop?.shop_name ?? `Shop ${ownerShopId}`,
-          userId,
-        };
+        add(primaryId, `Shop ${primaryId}`, resolvedUserId);
       }
     }
   } catch {
-    // fall through
+    // fall through to /users/{id}/shops
   }
 
-  if (!creds.userId) {
-    throw new Error('Could not resolve your Etsy user. Try Connect again with your seller account.');
+  const userIds = [resolvedUserId, creds.userId].filter(
+    (v, i, arr): v is string => !!v && arr.indexOf(v) === i,
+  );
+
+  for (const userId of userIds) {
+    try {
+      const byOwner = await etsyFetch<{
+        results?: Array<{ shop_id?: unknown; shop_name?: string }>;
+        shop_id?: unknown;
+        shop_name?: string;
+        count?: number;
+      }>(creds, `/users/${userId}/shops`);
+
+      if (Array.isArray(byOwner.results)) {
+        for (const row of byOwner.results) {
+          add(toShopId(row.shop_id), row.shop_name ?? '', userId);
+        }
+      } else {
+        const single = pickShop(byOwner);
+        add(toShopId(single?.shop_id), single?.shop_name ?? '', userId);
+      }
+    } catch {
+      // try next user id
+    }
   }
-  const byTokenUser = await etsyFetch<unknown>(creds, `/users/${creds.userId}/shops`);
-  const shop = pickShop(byTokenUser);
-  const shopId = toShopId(shop?.shop_id);
-  if (!shopId) {
-    throw new Error('No Etsy shop found for this account.');
+
+  if (!byId.size) {
+    throw new Error(
+      'Could not resolve your Etsy shop. Try Connect again with your seller account.',
+    );
   }
-  return {
-    shopId,
-    shopName: shop?.shop_name ?? `Shop ${shopId}`,
-    userId: creds.userId,
-  };
+
+  return [...byId.values()];
 }
 
 export type EtsyShippingStatus =

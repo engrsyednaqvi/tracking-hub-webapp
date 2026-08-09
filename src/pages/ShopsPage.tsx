@@ -98,8 +98,9 @@ export function ShopsPage() {
         <div>
           <h2 className="text-xl font-semibold text-slate-900">Etsy shops</h2>
           <p className="mt-1 max-w-2xl text-sm text-slate-600">
-            Connect with the same Etsy developer app as the Chrome extension. Orders sync into
-            Firebase for this web dashboard.
+            Connect one or more Etsy shops. To add another shop on a different Etsy account, click
+            Connect again and approve while logged into that seller account. Same-account shops are
+            all imported in one Connect.
           </p>
           {error ? <p className="mt-2 text-sm text-rose-600">{error}</p> : null}
           {banner ? <p className="mt-2 text-sm text-teal-700">{banner}</p> : null}
@@ -113,7 +114,11 @@ export function ShopsPage() {
             className="inline-flex items-center gap-2 rounded-xl bg-brand px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
           >
             <Link2 className="h-4 w-4" />
-            {busy ? 'Redirecting…' : 'Connect Etsy'}
+            {busy
+              ? 'Redirecting…'
+              : shops.some((s) => s.connected)
+                ? 'Connect another shop'
+                : 'Connect Etsy'}
           </button>
           <button
             type="button"

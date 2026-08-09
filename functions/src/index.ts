@@ -11,8 +11,8 @@ import {
   buildAuthorizeUrl,
   exchangeAuthorizationCode,
   fetchAllPaidReceipts,
+  fetchAllShopsForUser,
   fetchListingImageUrl,
-  fetchPrimaryShop,
   mapReceiptToOrderFields,
   refreshAccessToken,
   userIdFromAccessToken,
@@ -131,7 +131,7 @@ export const etsyOAuthCallback = onRequest(
       });
 
       const etsyUserId = userIdFromAccessToken(token.access_token);
-      const shop = await fetchPrimaryShop({
+      const shops = await fetchAllShopsForUser({
         keystring,
         sharedSecret,
         accessToken: token.access_token,
@@ -141,53 +141,68 @@ export const etsyOAuthCallback = onRequest(
       const now = new Date().toISOString();
       const expiresAt = Date.now() + Math.max(60, token.expires_in - 60) * 1000;
       const shopsCol = db().collection('users').doc(session.uid).collection('shops');
-      const existing = await shopsCol.where('etsyShopId', '==', String(shop.shopId)).limit(1).get();
+      const connectedNames: string[] = [];
 
-      let shopDocId: string;
-      if (!existing.empty) {
-        shopDocId = existing.docs[0]!.id;
-        await shopsCol.doc(shopDocId).set(
-          {
+      for (const shop of shops) {
+        const existing = await shopsCol
+          .where('etsyShopId', '==', String(shop.shopId))
+          .limit(1)
+          .get();
+
+        let shopDocId: string;
+        if (!existing.empty) {
+          shopDocId = existing.docs[0]!.id;
+          await shopsCol.doc(shopDocId).set(
+            {
+              name: shop.shopName,
+              platform: 'etsy',
+              connected: true,
+              etsyShopId: String(shop.shopId),
+              etsyUserId: shop.userId ?? etsyUserId,
+              updatedAt: now,
+            },
+            { merge: true },
+          );
+        } else {
+          shopDocId = createId('shop');
+          await shopsCol.doc(shopDocId).set({
+            id: shopDocId,
             name: shop.shopName,
             platform: 'etsy',
             connected: true,
             etsyShopId: String(shop.shopId),
             etsyUserId: shop.userId ?? etsyUserId,
+            createdAt: now,
             updatedAt: now,
-          },
-          { merge: true },
-        );
-      } else {
-        shopDocId = createId('shop');
-        await shopsCol.doc(shopDocId).set({
-          id: shopDocId,
-          name: shop.shopName,
-          platform: 'etsy',
-          connected: true,
-          etsyShopId: String(shop.shopId),
-          etsyUserId: shop.userId ?? etsyUserId,
-          createdAt: now,
-          updatedAt: now,
-        });
+          });
+        }
+
+        // Same OAuth token can authorize every shop on this Etsy account.
+        await db()
+          .collection('users')
+          .doc(session.uid)
+          .collection('etsyCredentials')
+          .doc(shopDocId)
+          .set({
+            shopDocId,
+            etsyShopId: shop.shopId,
+            accessToken: token.access_token,
+            refreshToken: token.refresh_token,
+            expiresAt,
+            etsyUserId: shop.userId ?? etsyUserId,
+            updatedAt: now,
+          });
+
+        connectedNames.push(shop.shopName);
       }
 
-      await db()
-        .collection('users')
-        .doc(session.uid)
-        .collection('etsyCredentials')
-        .doc(shopDocId)
-        .set({
-          shopDocId,
-          etsyShopId: shop.shopId,
-          accessToken: token.access_token,
-          refreshToken: token.refresh_token,
-          expiresAt,
-          etsyUserId: shop.userId ?? etsyUserId,
-          updatedAt: now,
-        });
+      const label =
+        connectedNames.length === 1
+          ? connectedNames[0]!
+          : `${connectedNames.length} shops (${connectedNames.join(', ')})`;
 
       res.redirect(
-        `${origin}/shops?etsy=connected&shop=${encodeURIComponent(shop.shopName)}`,
+        `${origin}/shops?etsy=connected&shop=${encodeURIComponent(label)}`,
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Etsy connect failed';
