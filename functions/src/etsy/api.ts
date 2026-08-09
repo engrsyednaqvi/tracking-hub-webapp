@@ -324,22 +324,22 @@ function shippingStatusFromReceipt(receipt: EtsyReceipt): {
     truthyFlag(receipt.is_canceled) ||
     truthyFlag(receipt.was_canceled) ||
     fromText === 'cancelled' ||
-    /cancel|refunded/i.test(receiptStatus)
+    /cancel|fully refunded/i.test(receiptStatus)
   ) {
     return { status: 'cancelled', etsyStatusRaw, trackingNumber, carrier };
   }
 
-  // 2) Delivered
+  // 2) Delivered — only real delivery flags (NOT receipt status "completed").
+  //    On Etsy, Completed orders still show Pre-transit / In transit / Delivered.
   if (
     truthyFlag(receipt.was_delivered) ||
     truthyFlag(receipt.is_delivered) ||
-    fromText === 'delivered' ||
-    receiptStatus.toLowerCase() === 'completed'
+    fromText === 'delivered'
   ) {
     return { status: 'delivered', etsyStatusRaw, trackingNumber, carrier };
   }
 
-  // 3) Explicit In transit / Pre-transit from Etsy text fields
+  // 3) Explicit shipping text from Etsy when present
   if (fromText === 'in_transit') {
     return { status: 'in_transit', etsyStatusRaw, trackingNumber, carrier };
   }
@@ -347,13 +347,14 @@ function shippingStatusFromReceipt(receipt: EtsyReceipt): {
     return { status: 'pre_transit', etsyStatusRaw, trackingNumber, carrier };
   }
 
-  // 4) No tracking number → No tracking (Etsy UI)
+  // 4) No tracking number → No tracking
   if (!trackingNumber) {
     return { status: 'no_tracking', etsyStatusRaw, trackingNumber, carrier };
   }
 
-  // 5) Has tracking, not delivered:
-  //    Shipped on Etsy → In transit; tracking present but not marked shipped → Pre-transit
+  // 5) Inside Completed (and other non-delivered) orders with tracking:
+  //    - tracking but not shipped yet → Pre-transit
+  //    - shipped / moving, not delivered → In transit
   if (shipped) {
     return { status: 'in_transit', etsyStatusRaw, trackingNumber, carrier };
   }
