@@ -3,6 +3,7 @@ import { LayoutDashboard, Settings, Store } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ShopSwitcher } from '@/components/shops/ShopSwitcher';
 import { ShopProvider } from '@/context/ShopContext';
+import { useAuth } from '@/context/AuthContext';
 
 const nav = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -11,9 +12,17 @@ const nav = [
 ];
 
 export function AppShell() {
+  const { user, demoMode, logOut } = useAuth();
+
   return (
     <ShopProvider>
       <div className="mx-auto flex min-h-screen max-w-6xl flex-col px-4 py-6 sm:px-6 lg:px-8">
+        {demoMode ? (
+          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            Running in demo mode. Add Firebase env vars (see README) to enable real accounts and sync.
+          </div>
+        ) : null}
+
         <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-sm font-medium text-brand-ink/70">Tracking Hub</p>
@@ -24,7 +33,18 @@ export function AppShell() {
               One place for every Etsy shop. Connect shops, switch views, track supplier shipments.
             </p>
           </div>
-          <ShopSwitcher />
+          <div className="flex flex-col items-stretch gap-2 sm:items-end">
+            <ShopSwitcher />
+            {user ? (
+              <button
+                type="button"
+                onClick={() => void logOut()}
+                className="text-left text-xs text-slate-500 hover:text-slate-800 sm:text-right"
+              >
+                {user.email} · Sign out
+              </button>
+            ) : null}
+          </div>
         </header>
 
         <nav className="mb-6 flex flex-wrap gap-1 border-b border-surface-line pb-px">
@@ -53,7 +73,7 @@ export function AppShell() {
         </main>
 
         <footer className="mt-10 border-t border-surface-line pt-4 text-xs text-slate-500">
-          Web app foundation — Firebase multi-shop backend coming next. Chrome extension stays separate.
+          Multi-shop Firebase backend online · Etsy OAuth + tracking refresh next · Extension stays separate
         </footer>
       </div>
     </ShopProvider>
