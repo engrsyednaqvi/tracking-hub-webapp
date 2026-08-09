@@ -318,26 +318,13 @@ export const etsySync = onCall(
         if (!existing.empty) {
           const docId = existing.docs[0]!.id;
           const prev = existing.docs[0]!;
-          const prevStatus = String(prev.get('status') ?? '');
-          // Open API cannot see Pre-transit vs In transit — keep Mission Control
-          // enrichment when the receipt is still in that ambiguous bucket.
-          const status =
-            fields.needsMissionControl &&
-            (prevStatus === 'pre_transit' || prevStatus === 'in_transit')
-              ? prevStatus
-              : fields.status;
-          const etsyStatusRaw =
-            status !== fields.status
-              ? `${fields.etsyStatusRaw} | preserved:${status}`
-              : fields.etsyStatusRaw;
           await ordersCol.doc(docId).set(
             {
               etsyOrderNumber: fields.etsyOrderNumber,
               customerName: fields.customerName,
               product: fields.product,
-              status,
-              etsyStatusRaw,
-              needsMissionControl: fields.needsMissionControl,
+              status: fields.status,
+              etsyStatusRaw: fields.etsyStatusRaw,
               trackingNumber: fields.trackingNumber || prev.get('trackingNumber') || '',
               carrier: fields.carrier || prev.get('carrier') || '',
               ...(imageUrl && !prev.get('imageUrl') ? { imageUrl } : {}),
@@ -358,7 +345,6 @@ export const etsySync = onCall(
             imageUrl: imageUrl ?? '',
             status: fields.status,
             etsyStatusRaw: fields.etsyStatusRaw,
-            needsMissionControl: fields.needsMissionControl,
             supplierName: '',
             supplierOrderNumber: '',
             trackingNumber: fields.trackingNumber,

@@ -201,8 +201,6 @@ export interface EtsyReceipt {
   was_canceled?: boolean | number | string;
   /** Set while fetching via Etsy was_shipped / was_delivered filters. */
   _shippingBucket?: EtsyShippingStatus;
-  /** Open API cannot distinguish Pre-transit vs In transit — needs MC data. */
-  _needsMissionControl?: boolean;
   transactions?: Array<{
     title?: string;
     quantity?: number;
@@ -265,7 +263,6 @@ function shippingStatusFromReceipt(receipt: EtsyReceipt): {
     delivered && 'is_delivered',
     trackingNumber ? 'has_tracking' : 'no_tracking_number',
     receipt._shippingBucket && `bucket:${receipt._shippingBucket}`,
-    receipt._needsMissionControl && 'needs_mission_control',
   ]
     .filter(Boolean)
     .join(' | ');
@@ -355,12 +352,8 @@ function receiptTrackingNumber(receipt: EtsyReceipt): string {
 
 /**
  * Fetch receipts in Etsy Open API filter buckets.
- *
- * Pre-transit vs In transit come from Mission Control
- * (`majorTrackingState` via /shipments/by-order), not Open API.
- * Shipped + tracked + not delivered is marked `_needsMissionControl` so sync
- * can preserve a previously enriched status / default to Pre-transit (label
- * created) until Mission Control data is applied.
+ * Pre-transit vs In transit are not available from Open API; shipped + tracked
+ * + not delivered is mapped coarsely to In transit.
  */
 export async function fetchAllPaidReceipts(
   creds: {
@@ -408,18 +401,12 @@ export async function fetchAllPaidReceipts(
   for (const r of shippedNotDelivered) {
     const id = String(r.receipt_id ?? '');
     if (!id) continue;
-    if (!receiptTrackingNumber(r)) {
-      byId.set(id, { ...r, _shippingBucket: 'no_tracking' });
-      continue;
-    }
-    // Ambiguous in Open API — Mission Control majorTrackingState decides.
-    // Default Pre-transit (label created / awaiting carrier), enrichment may
-    // upgrade to In transit.
-    byId.set(id, {
-      ...r,
-      _shippingBucket: 'pre_transit',
-      _needsMissionControl: true,
-    });
+    // Open API cannot split Etsy Pre-transit vs In transit — treat shipped +
+    // tracked + not delivered as In transit (coarse).
+    const bucket: EtsyShippingStatus = receiptTrackingNumber(r)
+      ? 'in_transit'
+      : 'no_tracking';
+    byId.set(id, { ...r, _shippingBucket: bucket });
   }
 
   for (const r of delivered) {
@@ -448,7 +435,6 @@ export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
   etsyStatusRaw: string;
   createdAt: string;
   listingId: number | null;
-  needsMissionControl: boolean;
 } {
   const id = String(receipt.receipt_id ?? '').trim();
   const titles = (receipt.transactions ?? [])
@@ -480,7 +466,6 @@ export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
     etsyStatusRaw: mapped.etsyStatusRaw,
     createdAt,
     listingId,
-    needsMissionControl: Boolean(receipt._needsMissionControl),
   };
 }
 
