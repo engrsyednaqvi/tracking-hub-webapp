@@ -1,10 +1,14 @@
-/** Aligned with the Chrome extension status list. */
+/** Etsy-aligned shipping statuses shown in the seller dashboard. */
 export const ORDER_STATUSES = [
+  'no_tracking',
+  'pre_transit',
+  'in_transit',
+  'delivered',
+  'cancelled',
+  // Kept for older docs / manual entries
   'waiting',
   'processing',
-  'in_transit',
   'out_for_delivery',
-  'delivered',
   'exception',
   'returned',
   'failed_delivery',
@@ -23,6 +27,8 @@ export interface Order {
   /** Listing thumbnail from Etsy when available. */
   imageUrl?: string;
   status: OrderStatus;
+  /** Raw status string from Etsy when present. */
+  etsyStatusRaw?: string;
   supplierName: string;
   supplierOrderNumber: string;
   trackingNumber: string;

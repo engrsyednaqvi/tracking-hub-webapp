@@ -32,10 +32,10 @@ export function DashboardPage() {
         filter: 'in_transit' as const,
       },
       {
-        label: 'Unprocessed',
-        value: String(countForFilter(filteredOrders, 'unprocessed')),
+        label: 'No tracking',
+        value: String(countForFilter(filteredOrders, 'no_tracking')),
         icon: TriangleAlert,
-        filter: 'unprocessed' as const,
+        filter: 'no_tracking' as const,
       },
     ],
     [filteredOrders],

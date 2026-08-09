@@ -62,8 +62,9 @@ export function OrdersTable({
       </div>
 
       <p className="text-xs text-slate-500">
-        <span className="font-medium text-slate-600">Unprocessed</span> means paid on Etsy but not
-        marked shipped yet (still waiting to process / no tracking).
+        Statuses match Etsy shipping:{' '}
+        <span className="font-medium text-slate-600">No tracking</span>, Pre-transit, In transit,
+        Delivered, Cancelled. Hover a badge for details.
       </p>
 
       {!visible.length ? (
@@ -153,7 +154,11 @@ function OrderRow({
       <td className="px-3 py-2.5 text-slate-600">{order.customerName || '—'}</td>
       <td className="px-3 py-2.5">
         <span
-          title={help}
+          title={
+            order.etsyStatusRaw
+              ? `${help}${help ? '\n' : ''}Etsy: ${order.etsyStatusRaw}`
+              : help
+          }
           className={cn(
             'inline-flex rounded-md px-2 py-0.5 text-xs font-medium',
             statusTone(order.status),

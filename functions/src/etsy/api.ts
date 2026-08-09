@@ -173,6 +173,13 @@ export async function fetchPrimaryShop(creds: {
   };
 }
 
+export type EtsyShippingStatus =
+  | 'no_tracking'
+  | 'pre_transit'
+  | 'in_transit'
+  | 'delivered'
+  | 'cancelled';
+
 export interface EtsyReceipt {
   receipt_id?: string | number;
   name?: string;
@@ -190,26 +197,166 @@ export interface EtsyReceipt {
   was_shipped?: boolean | number | string;
   is_delivered?: boolean | number | string;
   was_delivered?: boolean | number | string;
+  is_canceled?: boolean | number | string;
+  was_canceled?: boolean | number | string;
   transactions?: Array<{
     title?: string;
     quantity?: number;
     listing_id?: number | string;
     listing_image_id?: number | string;
   }>;
-  shipments?: Array<{ tracking_code?: string; carrier_name?: string }>;
+  shipments?: Array<Record<string, unknown>>;
+  [key: string]: unknown;
 }
 
 function truthyFlag(value: unknown): boolean {
   return value === true || value === 1 || value === '1' || value === 'true';
 }
 
-export async function fetchAllPaidReceipts(
+function collectStrings(value: unknown, into: string[], depth = 0): void {
+  if (depth > 3 || value == null) return;
+  if (typeof value === 'string' || typeof value === 'number') {
+    into.push(String(value));
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectStrings(item, into, depth + 1);
+    return;
+  }
+  if (typeof value === 'object') {
+    for (const v of Object.values(value as Record<string, unknown>)) {
+      collectStrings(v, into, depth + 1);
+    }
+  }
+}
+
+/** Parse Etsy / carrier status text into our five shipping statuses. */
+export function parseEtsyShippingStatusText(raw: string): EtsyShippingStatus | null {
+  const t = raw.toLowerCase().replace(/[_-]+/g, ' ').trim();
+  if (!t) return null;
+  if (
+    t.includes('cancel') ||
+    t.includes('fully refunded') ||
+    t.includes('partially refunded')
+  ) {
+    return 'cancelled';
+  }
+  if (t.includes('deliver')) return 'delivered';
+  if (t.includes('pre transit') || t.includes('pretransit') || t.includes('label created')) {
+    return 'pre_transit';
+  }
+  if (
+    t.includes('in transit') ||
+    t.includes('out for delivery') ||
+    t.includes('accepted') ||
+    t.includes('departed') ||
+    t.includes('arrived') ||
+    t.includes('on the way')
+  ) {
+    return 'in_transit';
+  }
+  if (
+    t.includes('no tracking') ||
+    t.includes('not shipped') ||
+    t === 'unshipped' ||
+    t === 'pending'
+  ) {
+    return 'no_tracking';
+  }
+  return null;
+}
+
+function shippingStatusFromReceipt(receipt: EtsyReceipt): {
+  status: EtsyShippingStatus;
+  etsyStatusRaw: string;
+  trackingNumber: string;
+  carrier: string;
+} {
+  const shipment = (receipt.shipments?.[0] ?? {}) as Record<string, unknown>;
+  const trackingNumber = String(
+    shipment.tracking_code ?? shipment.trackingCode ?? '',
+  ).trim();
+  const carrier = String(shipment.carrier_name ?? shipment.carrierName ?? '').trim();
+
+  const receiptStatus = String(receipt.status ?? '').trim();
+  const hints: string[] = [];
+  if (receiptStatus) hints.push(receiptStatus);
+
+  // Prefer explicit tracking-status style fields when Etsy/partners include them.
+  for (const key of [
+    'tracking_status',
+    'trackingStatus',
+    'mail_status',
+    'mailStatus',
+    'shipment_status',
+    'shipmentStatus',
+    'shipping_status',
+    'shippingStatus',
+    'delivery_status',
+    'deliveryStatus',
+    'current_status',
+    'currentStatus',
+    'status',
+    'major_tracking_state',
+    'majorTrackingState',
+  ]) {
+    const v = shipment[key] ?? receipt[key];
+    if (typeof v === 'string' || typeof v === 'number') hints.push(String(v));
+  }
+  collectStrings(shipment, hints);
+
+  let fromText: EtsyShippingStatus | null = null;
+  for (const hint of hints) {
+    fromText = parseEtsyShippingStatusText(hint);
+    if (fromText && fromText !== 'no_tracking') break;
+    if (fromText === 'no_tracking' && !trackingNumber) break;
+  }
+
+  const etsyStatusRaw = hints.filter(Boolean).slice(0, 6).join(' | ');
+
+  if (
+    truthyFlag(receipt.is_canceled) ||
+    truthyFlag(receipt.was_canceled) ||
+    fromText === 'cancelled' ||
+    parseEtsyShippingStatusText(receiptStatus) === 'cancelled'
+  ) {
+    return { status: 'cancelled', etsyStatusRaw, trackingNumber, carrier };
+  }
+
+  if (
+    truthyFlag(receipt.was_delivered) ||
+    truthyFlag(receipt.is_delivered) ||
+    fromText === 'delivered' ||
+    receiptStatus.toLowerCase() === 'completed'
+  ) {
+    return { status: 'delivered', etsyStatusRaw, trackingNumber, carrier };
+  }
+
+  if (fromText === 'in_transit') {
+    return { status: 'in_transit', etsyStatusRaw, trackingNumber, carrier };
+  }
+  if (fromText === 'pre_transit') {
+    return { status: 'pre_transit', etsyStatusRaw, trackingNumber, carrier };
+  }
+
+  // No carrier-status text from API — approximate from tracking presence (Etsy UI).
+  if (!trackingNumber) {
+    return { status: 'no_tracking', etsyStatusRaw, trackingNumber, carrier };
+  }
+
+  // Has a tracking number but not delivered: Etsy usually starts at Pre-transit
+  // until the carrier scans (In transit). Public API often omits that scan state.
+  return { status: 'pre_transit', etsyStatusRaw, trackingNumber, carrier };
+}
+
+async function fetchReceiptPage(
   creds: {
     keystring: string;
     sharedSecret: string;
     accessToken: string;
     shopId: number;
   },
+  extra: Record<string, string>,
   minCreated: number,
 ): Promise<EtsyReceipt[]> {
   const limit = 100;
@@ -218,10 +365,10 @@ export async function fetchAllPaidReceipts(
 
   for (;;) {
     const params = new URLSearchParams({
-      was_paid: 'true',
       min_created: String(minCreated),
       limit: String(limit),
       offset: String(offset),
+      ...extra,
     });
     const data = await etsyFetch<{ results?: EtsyReceipt[] }>(
       creds,
@@ -237,6 +384,30 @@ export async function fetchAllPaidReceipts(
   return all;
 }
 
+/** Paid + canceled receipts in the window (deduped). */
+export async function fetchAllPaidReceipts(
+  creds: {
+    keystring: string;
+    sharedSecret: string;
+    accessToken: string;
+    shopId: number;
+  },
+  minCreated: number,
+): Promise<EtsyReceipt[]> {
+  const [paid, canceled] = await Promise.all([
+    fetchReceiptPage(creds, { was_paid: 'true' }, minCreated),
+    fetchReceiptPage(creds, { was_canceled: 'true' }, minCreated).catch(() => [] as EtsyReceipt[]),
+  ]);
+
+  const byId = new Map<string, EtsyReceipt>();
+  for (const r of [...paid, ...canceled]) {
+    const id = String(r.receipt_id ?? '');
+    if (!id) continue;
+    byId.set(id, r);
+  }
+  return [...byId.values()];
+}
+
 export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
   etsyOrderNumber: string;
   etsyReceiptId: string;
@@ -244,7 +415,8 @@ export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
   product: string;
   trackingNumber: string;
   carrier: string;
-  status: 'waiting' | 'processing' | 'in_transit' | 'delivered';
+  status: EtsyShippingStatus;
+  etsyStatusRaw: string;
   createdAt: string;
   listingId: number | null;
 } {
@@ -257,22 +429,7 @@ export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
     })
     .filter(Boolean);
 
-  const shipment = receipt.shipments?.[0];
-  const trackingNumber = String(shipment?.tracking_code ?? '').trim();
-
-  // Etsy often omits is_delivered; completed receipts are finished/delivered.
-  const etsyStatus = String(receipt.status ?? '').toLowerCase().trim();
-  let status: 'waiting' | 'processing' | 'in_transit' | 'delivered' = 'waiting';
-  if (
-    truthyFlag(receipt.was_delivered) ||
-    truthyFlag(receipt.is_delivered) ||
-    etsyStatus === 'completed'
-  ) {
-    status = 'delivered';
-  } else if (truthyFlag(receipt.is_shipped) || truthyFlag(receipt.was_shipped)) {
-    // With tracking → in transit; shipped without tracking → pre-transit.
-    status = trackingNumber ? 'in_transit' : 'processing';
-  }
+  const mapped = shippingStatusFromReceipt(receipt);
 
   const unix = receipt.created_timestamp ?? receipt.create_timestamp;
   const createdAt =
@@ -287,9 +444,10 @@ export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
     etsyReceiptId: id,
     customerName: String(receipt.name ?? '').trim(),
     product: titles.join('; '),
-    trackingNumber,
-    carrier: String(shipment?.carrier_name ?? '').trim(),
-    status,
+    trackingNumber: mapped.trackingNumber,
+    carrier: mapped.carrier,
+    status: mapped.status,
+    etsyStatusRaw: mapped.etsyStatusRaw,
     createdAt,
     listingId,
   };

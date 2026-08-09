@@ -53,7 +53,7 @@ export async function createOrder(
     etsyOrderNumber: input.etsyOrderNumber.trim(),
     customerName: (input.customerName ?? '').trim(),
     product: (input.product ?? '').trim(),
-    status: input.status ?? 'waiting',
+    status: input.status ?? 'no_tracking',
     supplierName: (input.supplierName ?? '').trim(),
     supplierOrderNumber: (input.supplierOrderNumber ?? '').trim(),
     trackingNumber: (input.trackingNumber ?? '').trim(),

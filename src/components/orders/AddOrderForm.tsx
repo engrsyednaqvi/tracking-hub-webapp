@@ -2,7 +2,8 @@ import { useState, type FormEvent } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useShops } from '@/context/ShopContext';
 import { createOrder } from '@/services/orders';
-import { ORDER_STATUSES, type OrderStatus } from '@/types';
+import type { OrderStatus } from '@/types';
+import { statusLabel } from '@/utils/status';
 
 export function AddOrderForm({ onDone }: { onDone?: () => void }) {
   const { user, demoMode } = useAuth();
@@ -15,7 +16,14 @@ export function AddOrderForm({ onDone }: { onDone?: () => void }) {
   const [product, setProduct] = useState('');
   const [trackingNumber, setTrackingNumber] = useState('');
   const [carrier, setCarrier] = useState('');
-  const [status, setStatus] = useState<OrderStatus>('waiting');
+  const [status, setStatus] = useState<OrderStatus>('no_tracking');
+  const statusOptions: OrderStatus[] = [
+    'no_tracking',
+    'pre_transit',
+    'in_transit',
+    'delivered',
+    'cancelled',
+  ];
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -95,9 +103,9 @@ export function AddOrderForm({ onDone }: { onDone?: () => void }) {
           onChange={(e) => setStatus(e.target.value as OrderStatus)}
           className="mt-1 w-full rounded-xl border border-surface-line px-3 py-2 text-sm"
         >
-          {ORDER_STATUSES.map((s) => (
+          {statusOptions.map((s) => (
             <option key={s} value={s}>
-              {s}
+              {statusLabel(s)}
             </option>
           ))}
         </select>
