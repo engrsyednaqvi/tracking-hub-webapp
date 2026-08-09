@@ -1,9 +1,18 @@
 import { useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, ArrowUpDown, ExternalLink, Package, Trash2 } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ExternalLink,
+  Package,
+  Printer,
+  Trash2,
+} from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useShops } from '@/context/ShopContext';
 import { deleteOrder } from '@/services/orders';
 import { formatOrderDate } from '@/utils/date';
+import { etsyShippingLabelUrl } from '@/utils/etsyLinks';
 import {
   countForFilter,
   ORDER_FILTERS,
@@ -126,6 +135,7 @@ export function OrdersTable({
                   />
                 </th>
                 <th className="px-3 py-2.5 font-medium">Tracking</th>
+                <th className="px-3 py-2.5 font-medium">Label</th>
                 <th className="px-3 py-2.5 font-medium" />
               </tr>
             </thead>
@@ -186,7 +196,9 @@ function OrderRow({
   onDelete: () => void;
 }) {
   const trackUrl = buildTrackingUrl(order.trackingNumber, order.carrier);
+  const labelUrl = etsyShippingLabelUrl(order);
   const help = statusHelp(order.status);
+  const hasEtsyLabel = Boolean(order.etsyShippingLabelId || order.trackingNumber);
 
   return (
     <tr className="border-b border-surface-line/70 last:border-0">
@@ -246,6 +258,22 @@ function OrderRow({
           <span>—</span>
         )}
         {order.carrier ? <p className="text-xs text-slate-400">{order.carrier}</p> : null}
+      </td>
+      <td className="px-3 py-2.5">
+        {labelUrl && hasEtsyLabel ? (
+          <a
+            href={labelUrl}
+            target="_blank"
+            rel="noreferrer"
+            title="Open order on Etsy → Download Shipping Label (stay logged into Etsy)"
+            className="inline-flex items-center gap-1 font-medium text-brand hover:underline"
+          >
+            <Printer className="h-3.5 w-3.5 shrink-0" />
+            Print
+          </a>
+        ) : (
+          <span className="text-slate-400">—</span>
+        )}
       </td>
       <td className="px-3 py-2.5 text-right">
         {canDelete ? (

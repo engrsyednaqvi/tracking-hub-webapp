@@ -13,6 +13,7 @@ export interface MissionControlTracking {
 export interface MissionControlShipment {
   shipmentId?: string | number;
   carrierName?: string | null;
+  shippingLabelId?: string | number | null;
   tracking?: MissionControlTracking | null;
 }
 
@@ -55,20 +56,26 @@ export function statusFromMissionControlTracking(
   return null;
 }
 
-/** Build receiptId → status from a shipments/by-order JSON payload. */
+export interface MissionControlOrderUpdate {
+  status: EtsyShippingStatus;
+  trackingNumber: string;
+  carrier: string;
+  shippingLabelId: string;
+  shipmentId: string;
+  raw: string;
+}
+
+/** Build receiptId → status (+ label ids) from a shipments/by-order JSON payload. */
 export function statusesFromShipmentsByOrder(
   payload: ShipmentsByOrderResponse,
-): Map<string, { status: EtsyShippingStatus; trackingNumber: string; carrier: string; raw: string }> {
+): Map<string, MissionControlOrderUpdate> {
   const shipments = payload.shipments ?? [];
   const byShipmentId = new Map<string, MissionControlShipment>();
   for (const s of shipments) {
     if (s.shipmentId != null) byShipmentId.set(String(s.shipmentId), s);
   }
 
-  const out = new Map<
-    string,
-    { status: EtsyShippingStatus; trackingNumber: string; carrier: string; raw: string }
-  >();
+  const out = new Map<string, MissionControlOrderUpdate>();
 
   for (const [orderId, shipmentIds] of Object.entries(payload.ordersToShipments ?? {})) {
     const firstId = shipmentIds?.[0];
@@ -80,6 +87,8 @@ export function statusesFromShipmentsByOrder(
       status,
       trackingNumber: String(tracking?.code ?? '').trim(),
       carrier: String(shipment?.carrierName ?? '').trim(),
+      shippingLabelId: String(shipment?.shippingLabelId ?? '').trim(),
+      shipmentId: String(shipment?.shipmentId ?? firstId ?? '').trim(),
       raw: [
         tracking?.majorTrackingState && `major:${tracking.majorTrackingState}`,
         tracking?.isShipped && 'isShipped',

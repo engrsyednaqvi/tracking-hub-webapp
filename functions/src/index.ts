@@ -420,6 +420,8 @@ export const etsyApplyShipmentsByOrder = onCall({ cors: true }, async (request) 
         needsMissionControl: false,
         ...(info.trackingNumber ? { trackingNumber: info.trackingNumber } : {}),
         ...(info.carrier ? { carrier: info.carrier } : {}),
+        ...(info.shippingLabelId ? { etsyShippingLabelId: info.shippingLabelId } : {}),
+        ...(info.shipmentId ? { etsyShipmentId: info.shipmentId } : {}),
         updatedAt: now,
       },
       { merge: true },

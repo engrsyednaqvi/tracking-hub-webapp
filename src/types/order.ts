@@ -33,6 +33,9 @@ export interface Order {
   supplierOrderNumber: string;
   trackingNumber: string;
   carrier: string;
+  /** Etsy postage label id when purchased via Etsy Shipping. */
+  etsyShippingLabelId?: string;
+  etsyShipmentId?: string;
   createdAt: string;
   updatedAt: string;
 }
