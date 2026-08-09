@@ -265,11 +265,11 @@ function OrderRow({
             href={labelUrl}
             target="_blank"
             rel="noreferrer"
-            title="Open order on Etsy → Download Shipping Label (stay logged into Etsy)"
+            title="Opens Etsy order (stay logged in) → Download Shipping Label PDF"
             className="inline-flex items-center gap-1 font-medium text-brand hover:underline"
           >
             <Printer className="h-3.5 w-3.5 shrink-0" />
-            Print
+            Etsy
           </a>
         ) : (
           <span className="text-slate-400">—</span>

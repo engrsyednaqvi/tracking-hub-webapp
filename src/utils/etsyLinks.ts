@@ -6,9 +6,12 @@ export function etsyOrderUrl(receiptId: string | undefined): string | null {
 }
 
 /**
- * Best-effort print/download entry point for an Etsy-purchased label.
- * Opens the order in Shop Manager — click “Download Shipping Label” there.
- * (Etsy Open API does not expose label PDFs.)
+ * Entry point for printing an Etsy-purchased shipping label.
+ *
+ * Verified: Open API has no label PDF endpoint. Direct
+ * `/shipping-labels/{id}/download` URLs 404 without a seller session, and even
+ * with session they are not part of the public API. The reliable path is the
+ * seller order page → “Download Shipping Label” (PDF).
  */
 export function etsyShippingLabelUrl(order: {
   etsyReceiptId?: string;
