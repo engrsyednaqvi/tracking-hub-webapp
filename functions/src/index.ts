@@ -371,8 +371,14 @@ export const etsySync = onCall(
         shopDocs = all.docs;
       }
 
+      // Never sync shops waiting for a fresh OAuth (stale tokens after app key change).
+      shopDocs = shopDocs.filter((doc) => doc.get('reconnectRequired') !== true);
+
       if (!shopDocs.length) {
-        throw new HttpsError('failed-precondition', 'No connected Etsy shops to sync.');
+        throw new HttpsError(
+          'failed-precondition',
+          'No connected Etsy shops to sync. If a shop says reconnect, use Reconnect Etsy (login) first — Sync cannot fix invalid tokens.',
+        );
       }
 
       const minCreated = Math.floor(Date.now() / 1000) - syncDays * 24 * 60 * 60;

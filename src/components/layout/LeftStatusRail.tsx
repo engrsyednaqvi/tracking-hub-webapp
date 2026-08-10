@@ -1,29 +1,49 @@
-import { AlertTriangle, Info, RefreshCw, X } from 'lucide-react';
+import { AlertTriangle, Info, Link2, RefreshCw, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useAppErrors } from '@/context/ErrorContext';
 import { useShops } from '@/context/ShopContext';
+import { useEtsyConnect } from '@/hooks/useEtsyConnect';
 import { cn } from '@/lib/cn';
 
-/** Fixed left rail: Sync + all status/error text (nowhere else). */
+/** Fixed left rail: Reconnect / Sync + all status/error text. */
 export function LeftStatusRail() {
   const { demoMode } = useAuth();
   const { notices, dismissNotice, clearErrors } = useAppErrors();
   const { shops, syncing, syncAll } = useShops();
-  const hasConnected = shops.some((s) => s.connected);
+  const { connectEtsy, connecting } = useEtsyConnect();
+
+  const needsReconnect = shops.filter(
+    (s) => s.reconnectRequired || (!s.connected && s.etsyShopId),
+  );
+  const hasConnected = shops.some((s) => s.connected && !s.reconnectRequired);
 
   return (
     <aside
       className="fixed left-3 top-16 z-50 flex w-[min(22rem,calc(100vw-1.5rem))] flex-col gap-2"
       aria-live="polite"
     >
+      {needsReconnect.length ? (
+        <button
+          type="button"
+          disabled={demoMode || connecting}
+          onClick={() => void connectEtsy()}
+          className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-rose-700 px-3 py-2.5 text-sm font-medium text-white shadow-lg disabled:opacity-50"
+        >
+          <Link2 className="h-4 w-4" />
+          {connecting ? 'Redirecting to Etsy…' : 'Reconnect Etsy (login)'}
+        </button>
+      ) : null}
+
       <button
         type="button"
-        disabled={demoMode || syncing || !hasConnected}
+        disabled={demoMode || syncing || connecting || !hasConnected}
         onClick={() => void syncAll()}
         title={
           hasConnected
-            ? 'Sync all connected shops (also every 30 min while this tab is open)'
-            : 'Connect an Etsy shop first'
+            ? 'Sync connected shops (every 30 min while this tab is open)'
+            : needsReconnect.length
+              ? 'Reconnect Etsy first — Sync is disabled until tokens are valid'
+              : 'Connect an Etsy shop first'
         }
         className={cn(
           'inline-flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium shadow-lg',
@@ -33,7 +53,11 @@ export function LeftStatusRail() {
         <RefreshCw className={cn('h-4 w-4', syncing && 'animate-spin')} />
         {syncing ? 'Syncing…' : 'Sync orders'}
       </button>
-      <p className="px-1 text-[11px] text-slate-500">Auto-sync every 30 min while tab is open</p>
+      <p className="px-1 text-[11px] text-slate-500">
+        {needsReconnect.length
+          ? `Reconnect required for: ${needsReconnect.map((s) => s.name).join(', ')}`
+          : 'Auto-sync every 30 min while tab is open'}
+      </p>
 
       {notices.length ? (
         <>

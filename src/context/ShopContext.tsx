@@ -122,9 +122,13 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     async (shopId?: string, opts?: { silent?: boolean }) => {
       if (demoMode || !user) return;
       if (syncingRef.current) return;
-      if (!shops.some((s) => s.connected)) {
+      const syncable = shops.filter((s) => s.connected && !s.reconnectRequired);
+      if (!syncable.length) {
         if (!opts?.silent) {
-          reportInfo('Sync skipped', 'No connected Etsy shops. Use Connect Etsy on Shops.');
+          reportInfo(
+            'Sync skipped',
+            'No shops ready to sync. Click “Reconnect Etsy (login)” on the left, approve on Etsy, then sync.',
+          );
         }
         return;
       }
@@ -154,7 +158,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
   // Free client-side auto-sync while the app tab is open (~48 calls/day).
   useEffect(() => {
     if (demoMode || !user) return;
-    if (!shops.some((s) => s.connected)) return;
+    if (!shops.some((s) => s.connected && !s.reconnectRequired)) return;
 
     const id = window.setInterval(() => {
       if (document.visibilityState !== 'visible') return;

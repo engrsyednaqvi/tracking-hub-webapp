@@ -1,10 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Link2, Plus, RefreshCw, Store, Trash2 } from 'lucide-react';
+import { Link2, RefreshCw, Store, Trash2, Plus } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useAppErrors } from '@/context/ErrorContext';
 import { useShops } from '@/context/ShopContext';
-import { startEtsyOAuth } from '@/lib/functions';
+import { useEtsyConnect } from '@/hooks/useEtsyConnect';
 import { createShop, deleteShop } from '@/services/shops';
 
 const ETSY_CALLBACK =
@@ -14,12 +14,14 @@ export function ShopsPage() {
   const { user, demoMode } = useAuth();
   const { reportError, reportInfo } = useAppErrors();
   const { shops, setActiveShopId, loading, syncing, syncShop } = useShops();
+  const { connectEtsy, connecting } = useEtsyConnect();
   const [searchParams, setSearchParams] = useSearchParams();
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const needsReconnect = shops.filter((s) => s.reconnectRequired || (!s.connected && s.etsyShopId));
-  const reconnectKey = needsReconnect.map((s) => s.id).join(',');
+  const needsReconnect = shops.filter(
+    (s) => s.reconnectRequired || (!s.connected && s.etsyShopId),
+  );
 
   useEffect(() => {
     const etsy = searchParams.get('etsy');
@@ -35,18 +37,6 @@ export function ShopsPage() {
     }
     setSearchParams({}, { replace: true });
   }, [searchParams, setSearchParams, reportError, reportInfo]);
-
-  useEffect(() => {
-    if (!needsReconnect.length) return;
-    reportError(
-      'Reconnect required',
-      needsReconnect
-        .map((s) => `${s.name}${s.reconnectReason ? `: ${s.reconnectReason}` : ''}`)
-        .join('\n'),
-    );
-    // Only when the set of shops needing reconnect changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by reconnectKey
-  }, [reconnectKey]);
 
   async function onAdd(e: FormEvent) {
     e.preventDefault();
@@ -66,40 +56,26 @@ export function ShopsPage() {
     }
   }
 
-  async function onConnectEtsy() {
-    if (demoMode || !user) {
-      reportError('Connect Etsy failed', 'Sign in first.');
-      return;
-    }
-    setBusy(true);
-    try {
-      const { authUrl } = await startEtsyOAuth();
-      window.location.assign(authUrl);
-    } catch (err) {
-      reportError('Connect Etsy failed', err);
-      setBusy(false);
-    }
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold text-slate-900">Etsy shops</h2>
           <p className="mt-1 max-w-2xl text-sm text-slate-600">
-            Reconnect shops after an Etsy app key change. Sync and status messages are on the left.
+            Sync cannot fix bad tokens. Use <strong>Reconnect Etsy (login)</strong> on the left —
+            that opens Etsy’s approve page.
           </p>
         </div>
         <button
           type="button"
-          disabled={busy || demoMode}
-          onClick={() => void onConnectEtsy()}
+          disabled={busy || demoMode || connecting}
+          onClick={() => void connectEtsy()}
           className="inline-flex items-center gap-2 rounded-xl bg-brand px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
         >
           <Link2 className="h-4 w-4" />
-          {busy
-            ? 'Redirecting…'
-            : needsReconnect.length || shops.some((s) => s.connected)
+          {connecting
+            ? 'Redirecting to Etsy…'
+            : needsReconnect.length
               ? 'Reconnect / Connect shop'
               : 'Connect Etsy'}
         </button>
@@ -138,72 +114,73 @@ export function ShopsPage() {
       {loading ? <p className="text-sm text-slate-500">Loading shops…</p> : null}
 
       <ul className="grid gap-3 sm:grid-cols-2">
-        {shops.map((shop) => (
-          <li
-            key={shop.id}
-            className="rounded-2xl border border-surface-line bg-white p-5 shadow-sm"
-          >
-            <div className="flex items-start gap-3">
-              <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-brand-soft text-brand-ink">
-                <Store className="h-5 w-5" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="font-semibold text-slate-900">{shop.name}</p>
-                <p className="text-xs uppercase tracking-wide text-slate-500">{shop.platform}</p>
-                <p className="mt-2 text-sm text-slate-600">
-                  {shop.connected
-                    ? `Connected${shop.etsyShopId ? ` · #${shop.etsyShopId}` : ''}`
-                    : shop.reconnectRequired
-                      ? 'Needs reconnect'
-                      : 'Not connected'}
-                </p>
-                {shop.lastSyncAt ? (
-                  <p className="mt-1 text-xs text-slate-400">
-                    Last sync {new Date(shop.lastSyncAt).toLocaleString()}
+        {shops.map((shop) => {
+          const ready = shop.connected && !shop.reconnectRequired;
+          return (
+            <li
+              key={shop.id}
+              className="rounded-2xl border border-surface-line bg-white p-5 shadow-sm"
+            >
+              <div className="flex items-start gap-3">
+                <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-brand-soft text-brand-ink">
+                  <Store className="h-5 w-5" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-slate-900">{shop.name}</p>
+                  <p className="text-xs uppercase tracking-wide text-slate-500">{shop.platform}</p>
+                  <p className="mt-2 text-sm text-slate-600">
+                    {ready
+                      ? `Connected${shop.etsyShopId ? ` · #${shop.etsyShopId}` : ''}`
+                      : 'Needs Etsy login (Reconnect)'}
                   </p>
-                ) : null}
-                <div className="mt-3 flex flex-wrap gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setActiveShopId(shop.id)}
-                    className="text-sm font-medium text-brand hover:underline"
-                  >
-                    View orders
-                  </button>
-                  {shop.connected ? (
-                    <button
-                      type="button"
-                      disabled={syncing}
-                      onClick={() => void syncShop(shop.id)}
-                      className="inline-flex items-center gap-1 text-sm font-medium text-slate-700 hover:underline disabled:opacity-60"
-                    >
-                      <RefreshCw className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
-                      Sync
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={busy || demoMode}
-                      onClick={() => void onConnectEtsy()}
-                      className="text-sm font-medium text-rose-700 hover:underline"
-                    >
-                      Reconnect
-                    </button>
-                  )}
-                  {!demoMode && user ? (
-                    <button
-                      type="button"
-                      onClick={() => void deleteShop(user.uid, shop.id)}
-                      className="inline-flex items-center gap-1 text-sm text-rose-600 hover:underline"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" /> Remove
-                    </button>
+                  {shop.lastSyncAt ? (
+                    <p className="mt-1 text-xs text-slate-400">
+                      Last sync {new Date(shop.lastSyncAt).toLocaleString()}
+                    </p>
                   ) : null}
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setActiveShopId(shop.id)}
+                      className="text-sm font-medium text-brand hover:underline"
+                    >
+                      View orders
+                    </button>
+                    {ready ? (
+                      <button
+                        type="button"
+                        disabled={syncing}
+                        onClick={() => void syncShop(shop.id)}
+                        className="inline-flex items-center gap-1 text-sm font-medium text-slate-700 hover:underline disabled:opacity-60"
+                      >
+                        <RefreshCw className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
+                        Sync
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={busy || demoMode || connecting}
+                        onClick={() => void connectEtsy()}
+                        className="text-sm font-medium text-rose-700 hover:underline"
+                      >
+                        Reconnect (Etsy login)
+                      </button>
+                    )}
+                    {!demoMode && user ? (
+                      <button
+                        type="button"
+                        onClick={() => void deleteShop(user.uid, shop.id)}
+                        className="inline-flex items-center gap-1 text-sm text-rose-600 hover:underline"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Remove
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               </div>
-            </div>
-          </li>
-        ))}
+            </li>
+          );
+        })}
       </ul>
 
       {!loading && !shops.length ? (
