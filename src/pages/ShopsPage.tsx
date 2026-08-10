@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Link2, RefreshCw, Store, Trash2, Plus } from 'lucide-react';
+import { RefreshCw, Store, Trash2, Plus } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useAppErrors } from '@/context/ErrorContext';
@@ -18,10 +18,6 @@ export function ShopsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
-
-  const needsReconnect = shops.filter(
-    (s) => s.reconnectRequired || (!s.connected && s.etsyShopId),
-  );
 
   useEffect(() => {
     const etsy = searchParams.get('etsy');
@@ -58,32 +54,16 @@ export function ShopsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-semibold text-slate-900">Etsy shops</h2>
-          <p className="mt-1 max-w-2xl text-sm text-slate-600">
-            Sync cannot fix bad tokens. Use <strong>Reconnect Etsy (login)</strong> on the left —
-            that opens Etsy’s approve page.
-          </p>
-        </div>
-        <button
-          type="button"
-          disabled={busy || demoMode || connecting}
-          onClick={() => void connectEtsy()}
-          className="inline-flex items-center gap-2 rounded-xl bg-brand px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
-        >
-          <Link2 className="h-4 w-4" />
-          {connecting
-            ? 'Redirecting to Etsy…'
-            : needsReconnect.length
-              ? 'Reconnect / Connect shop'
-              : 'Connect Etsy'}
-        </button>
+      <div>
+        <h2 className="text-xl font-semibold text-slate-900">Etsy shops</h2>
+        <p className="mt-1 max-w-2xl text-sm text-slate-600">
+          Each Etsy account has its own Seller app. On the left, paste that account’s keystring +
+          secret, then Connect while logged into that seller on Etsy.
+        </p>
       </div>
 
       <section className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-        <p className="font-medium">Etsy app Callback URL</p>
-        <p className="mt-1">Must match exactly:</p>
+        <p className="font-medium">Callback URL (same for every Seller app)</p>
         <code className="mt-2 block break-all rounded-lg bg-white/80 px-2 py-1.5 text-xs">
           {ETSY_CALLBACK}
         </code>
@@ -98,7 +78,7 @@ export function ShopsPage() {
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Or use Connect Etsy above"
+            placeholder="Or Connect from the left"
             className="mt-1 w-full rounded-xl border border-surface-line px-3 py-2"
           />
         </label>
@@ -131,7 +111,7 @@ export function ShopsPage() {
                   <p className="mt-2 text-sm text-slate-600">
                     {ready
                       ? `Connected${shop.etsyShopId ? ` · #${shop.etsyShopId}` : ''}`
-                      : 'Needs Etsy login (Reconnect)'}
+                      : 'Needs Connect with this shop’s Seller app'}
                   </p>
                   {shop.lastSyncAt ? (
                     <p className="mt-1 text-xs text-slate-400">
@@ -159,11 +139,11 @@ export function ShopsPage() {
                     ) : (
                       <button
                         type="button"
-                        disabled={busy || demoMode || connecting}
-                        onClick={() => void connectEtsy()}
+                        disabled={demoMode || connecting}
+                        onClick={() => void connectEtsy({ shopId: shop.id })}
                         className="text-sm font-medium text-rose-700 hover:underline"
                       >
-                        Reconnect (Etsy login)
+                        Reconnect (saved keys)
                       </button>
                     )}
                     {!demoMode && user ? (
@@ -184,7 +164,9 @@ export function ShopsPage() {
       </ul>
 
       {!loading && !shops.length ? (
-        <p className="text-sm text-slate-500">No shops yet — click Connect Etsy.</p>
+        <p className="text-sm text-slate-500">
+          No shops yet — paste a Seller app’s keys on the left and Connect.
+        </p>
       ) : null}
     </div>
   );

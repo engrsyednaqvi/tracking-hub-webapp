@@ -8,20 +8,22 @@ function functions() {
   return getFunctions(app, 'us-central1');
 }
 
-export async function startEtsyOAuth(): Promise<{ authUrl: string; redirectUri: string }> {
-  const callable = httpsCallable<unknown, { authUrl: string; redirectUri: string }>(
-    functions(),
-    'etsyOAuthStart',
-  );
-  const result = await callable({});
+export async function startEtsyOAuth(input?: {
+  keystring?: string;
+  sharedSecret?: string;
+  shopId?: string;
+}): Promise<{ authUrl: string; redirectUri: string }> {
+  const callable = httpsCallable<
+    { keystring?: string; sharedSecret?: string; shopId?: string },
+    { authUrl: string; redirectUri: string }
+  >(functions(), 'etsyOAuthStart');
+  const result = await callable(input ?? {});
   const data = result.data;
   if (!data || typeof data !== 'object') {
     throw new Error(`etsyOAuthStart returned unexpected data: ${JSON.stringify(data)}`);
   }
   if (!data.authUrl || typeof data.authUrl !== 'string') {
-    throw new Error(
-      `etsyOAuthStart missing authUrl. Got: ${JSON.stringify(data)}`,
-    );
+    throw new Error(`etsyOAuthStart missing authUrl. Got: ${JSON.stringify(data)}`);
   }
   return data;
 }

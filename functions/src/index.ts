@@ -48,6 +48,52 @@ function createId(prefix: string): string {
   return `${prefix}_${randomBytes(8).toString('hex')}`;
 }
 
+type OAuthAppCreds = { keystring: string; sharedSecret: string };
+
+/** Resolve Etsy app keys: per-request → saved shop creds → global secrets. */
+async function resolveEtsyAppCreds(
+  uid: string,
+  input: { keystring?: unknown; sharedSecret?: unknown; shopId?: unknown },
+): Promise<OAuthAppCreds> {
+  const fromRequestKey =
+    typeof input.keystring === 'string' ? input.keystring.trim() : '';
+  const fromRequestSecret =
+    typeof input.sharedSecret === 'string' ? input.sharedSecret.trim() : '';
+  if (fromRequestKey && fromRequestSecret) {
+    return { keystring: fromRequestKey, sharedSecret: fromRequestSecret };
+  }
+
+  const shopId = typeof input.shopId === 'string' ? input.shopId.trim() : '';
+  if (shopId) {
+    const snap = await db()
+      .collection('users')
+      .doc(uid)
+      .collection('etsyCredentials')
+      .doc(shopId)
+      .get();
+    const data = snap.data() as { keystring?: string; sharedSecret?: string } | undefined;
+    const key = String(data?.keystring ?? '').trim();
+    const secret = String(data?.sharedSecret ?? '').trim();
+    if (key && secret) {
+      return { keystring: key, sharedSecret: secret };
+    }
+    throw new HttpsError(
+      'failed-precondition',
+      'No Etsy app keys saved for this shop. Paste that shop’s Seller app keystring + shared secret, then Connect.',
+    );
+  }
+
+  const keystring = etsyKeystring.value().trim();
+  const sharedSecret = etsySharedSecret.value().trim();
+  if (!keystring || !sharedSecret) {
+    throw new HttpsError(
+      'failed-precondition',
+      'Paste the Etsy Seller app keystring + shared secret for the account you are connecting.',
+    );
+  }
+  return { keystring, sharedSecret };
+}
+
 /** Start Etsy OAuth — returns authorize URL for the browser. */
 export const etsyOAuthStart = onCall(
   { secrets: [etsyKeystring, etsySharedSecret], cors: true },
@@ -56,7 +102,10 @@ export const etsyOAuthStart = onCall(
       throw new HttpsError('unauthenticated', 'Sign in first.');
     }
 
-    const keystring = etsyKeystring.value().trim();
+    const { keystring, sharedSecret } = await resolveEtsyAppCreds(
+      request.auth.uid,
+      request.data ?? {},
+    );
     const codeVerifier = createCodeVerifier();
     const codeChallenge = createCodeChallenge(codeVerifier);
     const state = createOAuthState();
@@ -67,6 +116,8 @@ export const etsyOAuthStart = onCall(
       .set({
         uid: request.auth.uid,
         codeVerifier,
+        keystring,
+        sharedSecret,
         createdAt: FieldValue.serverTimestamp(),
         expiresAt: Date.now() + 10 * 60 * 1000,
       });
@@ -114,6 +165,8 @@ export const etsyOAuthCallback = onRequest(
         uid: string;
         codeVerifier: string;
         expiresAt: number;
+        keystring?: string;
+        sharedSecret?: string;
       };
       await sessionRef.delete();
       if (session.expiresAt < Date.now()) {
@@ -121,8 +174,12 @@ export const etsyOAuthCallback = onRequest(
         return;
       }
 
-      const keystring = etsyKeystring.value().trim();
-      const sharedSecret = etsySharedSecret.value().trim();
+      const keystring = String(session.keystring || etsyKeystring.value()).trim();
+      const sharedSecret = String(session.sharedSecret || etsySharedSecret.value()).trim();
+      if (!keystring || !sharedSecret) {
+        fail('OAuth session missing Etsy app keys. Start Connect again with keystring + secret.');
+        return;
+      }
       const token = await exchangeAuthorizationCode({
         keystring,
         sharedSecret,
@@ -181,7 +238,7 @@ export const etsyOAuthCallback = onRequest(
           });
         }
 
-        // Same OAuth token can authorize every shop on this Etsy account.
+        // Per-shop Seller app keys + tokens (Admin SDK only; clients cannot read).
         await db()
           .collection('users')
           .doc(session.uid)
@@ -194,8 +251,9 @@ export const etsyOAuthCallback = onRequest(
             refreshToken: token.refresh_token,
             expiresAt,
             etsyUserId: shop.userId ?? etsyUserId,
-            /** Bound to current Firebase ETSY_KEYSTRING — refresh fails if app keys change. */
             etsyClientId: keystring,
+            keystring,
+            sharedSecret,
             updatedAt: now,
           });
 
@@ -232,6 +290,7 @@ async function markShopNeedsReconnect(
     },
     { merge: true },
   );
+  // Keep keystring/sharedSecret so Reconnect can reuse that shop’s Seller app.
   await db()
     .collection('users')
     .doc(uid)
@@ -260,9 +319,13 @@ function isInvalidEtsyGrant(err: unknown): boolean {
 async function ensureAccessToken(
   uid: string,
   shopDocId: string,
-  keystring: string,
-  sharedSecret: string,
-): Promise<{ accessToken: string; etsyShopId: number }> {
+  globalFallback: OAuthAppCreds,
+): Promise<{
+  accessToken: string;
+  etsyShopId: number;
+  keystring: string;
+  sharedSecret: string;
+}> {
   const credRef = db()
     .collection('users')
     .doc(uid)
@@ -278,18 +341,34 @@ async function ensureAccessToken(
     expiresAt: number;
     etsyShopId: number;
     etsyClientId?: string;
+    keystring?: string;
+    sharedSecret?: string;
   };
+
+  const keystring = String(cred.keystring || globalFallback.keystring).trim();
+  const sharedSecret = String(cred.sharedSecret || globalFallback.sharedSecret).trim();
+  if (!keystring || !sharedSecret) {
+    const reason =
+      'Missing Etsy Seller app keys for this shop. Paste that account’s keystring + secret and Connect.';
+    await markShopNeedsReconnect(uid, shopDocId, reason);
+    throw new HttpsError('failed-precondition', reason);
+  }
 
   // Tokens are bound to the Etsy app (keystring) that issued them.
   if (cred.etsyClientId && cred.etsyClientId !== keystring) {
     const reason =
-      'Etsy API app key changed. Reconnect this shop with Connect Etsy so tokens match the new app.';
+      'Saved tokens do not match this shop’s Etsy app keys. Reconnect with the correct Seller app.';
     await markShopNeedsReconnect(uid, shopDocId, reason);
     throw new HttpsError('failed-precondition', reason);
   }
 
   if (cred.accessToken && cred.expiresAt > Date.now() + 60_000) {
-    return { accessToken: cred.accessToken, etsyShopId: Number(cred.etsyShopId) };
+    return {
+      accessToken: cred.accessToken,
+      etsyShopId: Number(cred.etsyShopId),
+      keystring,
+      sharedSecret,
+    };
   }
 
   if (!cred.refreshToken) {
@@ -308,7 +387,7 @@ async function ensureAccessToken(
   } catch (err) {
     const detail = errorMessage(err);
     const reason = isInvalidEtsyGrant(err)
-      ? `Etsy rejected this shop’s tokens (usually after changing the Etsy developer app). Reconnect via Connect Etsy. ${detail}`
+      ? `Etsy rejected this shop’s tokens. Reconnect with that account’s Seller app keys. ${detail}`
       : `Etsy token refresh failed — reconnect this shop. ${detail}`;
     await markShopNeedsReconnect(uid, shopDocId, reason);
     throw new HttpsError('failed-precondition', reason);
@@ -321,11 +400,18 @@ async function ensureAccessToken(
       refreshToken: token.refresh_token,
       expiresAt,
       etsyClientId: keystring,
+      keystring,
+      sharedSecret,
       updatedAt: new Date().toISOString(),
     },
     { merge: true },
   );
-  return { accessToken: token.access_token, etsyShopId: Number(cred.etsyShopId) };
+  return {
+    accessToken: token.access_token,
+    etsyShopId: Number(cred.etsyShopId),
+    keystring,
+    sharedSecret,
+  };
 }
 
 /** Sync paid receipts for one shop (or all connected shops). */
@@ -346,19 +432,14 @@ export const etsySync = onCall(
         365,
         Math.max(1, Number(request.data?.syncDays ?? 30) || 30),
       );
-      const keystring = etsyKeystring.value().trim();
-      const sharedSecret = etsySharedSecret.value().trim();
+      const globalFallback: OAuthAppCreds = {
+        keystring: etsyKeystring.value().trim(),
+        sharedSecret: etsySharedSecret.value().trim(),
+      };
       const uspsCreds = {
         consumerKey: uspsConsumerKey.value().trim(),
         consumerSecret: uspsConsumerSecret.value().trim(),
       };
-
-      if (!keystring || !sharedSecret) {
-        throw new HttpsError(
-          'failed-precondition',
-          'Etsy API secrets are missing on the server.',
-        );
-      }
 
       const shopsCol = db().collection('users').doc(uid).collection('shops');
       let shopDocs: QueryDocumentSnapshot[];
@@ -393,11 +474,10 @@ export const etsySync = onCall(
       for (const shopDoc of shopDocs) {
         const shopLabel = String(shopDoc.get('name') || shopDoc.id);
         try {
-          const { accessToken, etsyShopId } = await ensureAccessToken(
+          const { accessToken, etsyShopId, keystring, sharedSecret } = await ensureAccessToken(
             uid,
             shopDoc.id,
-            keystring,
-            sharedSecret,
+            globalFallback,
           );
           if (!Number.isFinite(etsyShopId) || etsyShopId <= 0) {
             throw new Error(`Invalid etsyShopId on shop ${shopLabel}`);

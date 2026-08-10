@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { AlertTriangle, Info, Link2, RefreshCw, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useAppErrors } from '@/context/ErrorContext';
@@ -5,12 +6,14 @@ import { useShops } from '@/context/ShopContext';
 import { useEtsyConnect } from '@/hooks/useEtsyConnect';
 import { cn } from '@/lib/cn';
 
-/** Fixed left rail: Reconnect / Sync + all status/error text. */
+/** Fixed left rail: per-shop Connect keys, Sync, status. */
 export function LeftStatusRail() {
   const { demoMode } = useAuth();
   const { notices, dismissNotice, clearErrors, etsyAuthUrl, setEtsyAuthUrl } = useAppErrors();
   const { shops, syncing, syncAll } = useShops();
   const { connectEtsy, connecting } = useEtsyConnect();
+  const [keystring, setKeystring] = useState('');
+  const [sharedSecret, setSharedSecret] = useState('');
 
   const needsReconnect = shops.filter(
     (s) => s.reconnectRequired || (!s.connected && s.etsyShopId),
@@ -22,15 +25,56 @@ export function LeftStatusRail() {
       className="fixed left-3 top-16 z-50 flex w-[min(22rem,calc(100vw-1.5rem))] flex-col gap-2"
       aria-live="polite"
     >
-      <button
-        type="button"
-        disabled={demoMode || connecting}
-        onClick={() => void connectEtsy()}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-rose-700 px-3 py-2.5 text-sm font-medium text-white shadow-lg disabled:opacity-50"
-      >
-        <Link2 className="h-4 w-4" />
-        {connecting ? 'Opening Etsy…' : needsReconnect.length ? 'Reconnect Etsy (login)' : 'Connect Etsy'}
-      </button>
+      <div className="space-y-2 rounded-xl border border-surface-line bg-white/95 p-3 shadow-lg backdrop-blur">
+        <p className="text-xs font-medium text-slate-700">Etsy Seller app for this connect</p>
+        <input
+          value={keystring}
+          onChange={(e) => setKeystring(e.target.value)}
+          placeholder="Keystring"
+          autoComplete="off"
+          className="w-full rounded-lg border border-surface-line px-2 py-1.5 text-xs"
+        />
+        <input
+          value={sharedSecret}
+          onChange={(e) => setSharedSecret(e.target.value)}
+          placeholder="Shared secret"
+          autoComplete="off"
+          type="password"
+          className="w-full rounded-lg border border-surface-line px-2 py-1.5 text-xs"
+        />
+        <button
+          type="button"
+          disabled={demoMode || connecting}
+          onClick={() =>
+            void connectEtsy({
+              keystring,
+              sharedSecret,
+            })
+          }
+          className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-rose-700 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+        >
+          <Link2 className="h-4 w-4" />
+          {connecting ? 'Opening Etsy…' : 'Connect with these keys'}
+        </button>
+        {needsReconnect.length ? (
+          <div className="space-y-1 border-t border-surface-line pt-2">
+            <p className="text-[11px] text-slate-500">
+              Reconnect with saved keys (no paste needed if keys were stored before):
+            </p>
+            {needsReconnect.map((shop) => (
+              <button
+                key={shop.id}
+                type="button"
+                disabled={demoMode || connecting}
+                onClick={() => void connectEtsy({ shopId: shop.id, keystring, sharedSecret })}
+                className="block w-full rounded-lg bg-rose-50 px-2 py-1.5 text-left text-xs font-medium text-rose-800 hover:bg-rose-100 disabled:opacity-50"
+              >
+                Reconnect {shop.name}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
 
       {etsyAuthUrl ? (
         <a
@@ -48,13 +92,6 @@ export function LeftStatusRail() {
         type="button"
         disabled={demoMode || syncing || connecting || !hasConnected}
         onClick={() => void syncAll()}
-        title={
-          hasConnected
-            ? 'Sync connected shops (every 30 min while this tab is open)'
-            : needsReconnect.length
-              ? 'Reconnect Etsy first — Sync is disabled until tokens are valid'
-              : 'Connect an Etsy shop first'
-        }
         className={cn(
           'inline-flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium shadow-lg',
           'bg-brand text-white disabled:cursor-not-allowed disabled:opacity-50',
@@ -64,9 +101,7 @@ export function LeftStatusRail() {
         {syncing ? 'Syncing…' : 'Sync orders'}
       </button>
       <p className="px-1 text-[11px] text-slate-500">
-        {needsReconnect.length
-          ? `Reconnect required for: ${needsReconnect.map((s) => s.name).join(', ')}`
-          : 'Auto-sync every 30 min while tab is open'}
+        Each shop uses its own Seller app. Auto-sync every 30 min when connected.
       </p>
 
       {notices.length ? (
@@ -81,7 +116,7 @@ export function LeftStatusRail() {
               Clear
             </button>
           </div>
-          <ul className="max-h-[60vh] space-y-2 overflow-y-auto">
+          <ul className="max-h-[45vh] space-y-2 overflow-y-auto">
             {notices.map((entry) => {
               const isError = entry.kind === 'error';
               return (
@@ -120,7 +155,7 @@ export function LeftStatusRail() {
                   </p>
                   <pre
                     className={cn(
-                      'mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg px-2 py-1.5 text-[11px] leading-relaxed',
+                      'mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg px-2 py-1.5 text-[11px] leading-relaxed',
                       isError ? 'bg-rose-50 text-rose-950' : 'bg-teal-50 text-teal-950',
                     )}
                   >
