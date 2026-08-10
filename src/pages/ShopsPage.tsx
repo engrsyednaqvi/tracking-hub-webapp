@@ -2,7 +2,9 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link2, Plus, RefreshCw, Store, Trash2 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { useAppErrors } from '@/context/ErrorContext';
 import { useShops } from '@/context/ShopContext';
+import { formatFirebaseError } from '@/lib/errors';
 import { startEtsyOAuth, syncEtsyOrders } from '@/lib/functions';
 import { createShop, deleteShop } from '@/services/shops';
 
@@ -11,6 +13,7 @@ const ETSY_CALLBACK =
 
 export function ShopsPage() {
   const { user, demoMode } = useAuth();
+  const { reportError } = useAppErrors();
   const { shops, setActiveShopId, loading, error } = useShops();
   const [searchParams, setSearchParams] = useSearchParams();
   const [name, setName] = useState('');
@@ -44,7 +47,9 @@ export function ShopsPage() {
       setName('');
       setActiveShopId(shop.id);
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Could not add shop');
+      const detail = formatFirebaseError(err);
+      setFormError(detail);
+      reportError('Add shop failed', err);
     } finally {
       setBusy(false);
     }
@@ -61,12 +66,9 @@ export function ShopsPage() {
       const { authUrl } = await startEtsyOAuth();
       window.location.assign(authUrl);
     } catch (err) {
-      const anyErr = err as { message?: string; code?: string; details?: unknown };
-      setFormError(
-        anyErr?.message ||
-          (typeof anyErr?.code === 'string' ? anyErr.code : null) ||
-          'Could not start Etsy connect',
-      );
+      const detail = formatFirebaseError(err);
+      setFormError(detail);
+      reportError('Connect Etsy failed', err);
       setBusy(false);
     }
   }
@@ -75,6 +77,7 @@ export function ShopsPage() {
     if (demoMode || !user) return;
     setSyncingId(shopId ?? 'all');
     setFormError(null);
+    setBanner(null);
     try {
       const result = await syncEtsyOrders({ shopId, syncDays: 30 });
       const uspsBit =
@@ -82,11 +85,20 @@ export function ShopsPage() {
           ? ` · USPS refined ${result.uspsEnriched}`
           : '';
       const uspsErr = result.uspsError ? ` · USPS: ${result.uspsError}` : '';
+      const shopErrBit = result.shopErrors?.length
+        ? ` · Shop errors: ${result.shopErrors.length}`
+        : '';
       setBanner(
-        `Synced ${result.shops} shop(s): ${result.created} new, ${result.updated} updated (last ${result.syncDays} days)${uspsBit}${uspsErr}.`,
+        `Synced ${result.shops} shop(s): ${result.created} new, ${result.updated} updated (last ${result.syncDays} days)${uspsBit}${uspsErr}${shopErrBit}.`,
       );
+      if (result.shopErrors?.length) {
+        reportError('Sync completed with shop errors', result.shopErrors.join('\n'));
+        setFormError(result.shopErrors.join('\n'));
+      }
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Sync failed');
+      const detail = formatFirebaseError(err);
+      setFormError(detail);
+      reportError('Etsy sync failed', err);
     } finally {
       setSyncingId(null);
     }
@@ -104,7 +116,11 @@ export function ShopsPage() {
           </p>
           {error ? <p className="mt-2 text-sm text-rose-600">{error}</p> : null}
           {banner ? <p className="mt-2 text-sm text-teal-700">{banner}</p> : null}
-          {formError ? <p className="mt-2 text-sm text-rose-600">{formError}</p> : null}
+          {formError ? (
+            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-rose-50 px-2 py-1.5 text-xs text-rose-800">
+              {formError}
+            </pre>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
           <button

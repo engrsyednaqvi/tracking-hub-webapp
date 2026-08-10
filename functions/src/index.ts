@@ -23,6 +23,7 @@ import {
   type ShipmentsByOrderResponse,
 } from './etsy/missionControl';
 import { createCodeChallenge, createCodeVerifier, createOAuthState } from './etsy/pkce';
+import { errorMessage, rethrowAsHttpsError } from './errors';
 import { fetchUspsTrackingStatus } from './usps/tracking';
 
 // Gen2 can load modules more than once — always bind a default app.
@@ -237,11 +238,27 @@ async function ensureAccessToken(
     return { accessToken: cred.accessToken, etsyShopId: Number(cred.etsyShopId) };
   }
 
-  const token = await refreshAccessToken({
-    keystring,
-    sharedSecret,
-    refreshToken: cred.refreshToken,
-  });
+  if (!cred.refreshToken) {
+    throw new HttpsError(
+      'failed-precondition',
+      'Etsy refresh token missing — reconnect this shop (Connect Etsy).',
+    );
+  }
+
+  let token: Awaited<ReturnType<typeof refreshAccessToken>>;
+  try {
+    token = await refreshAccessToken({
+      keystring,
+      sharedSecret,
+      refreshToken: cred.refreshToken,
+    });
+  } catch (err) {
+    throw new HttpsError(
+      'failed-precondition',
+      `Etsy token refresh failed — reconnect this shop. ${errorMessage(err)}`,
+    );
+  }
+
   const expiresAt = Date.now() + Math.max(60, token.expires_in - 60) * 1000;
   await credRef.set(
     {
@@ -263,186 +280,214 @@ export const etsySync = onCall(
     timeoutSeconds: 300,
   },
   async (request) => {
-    if (!request.auth?.uid) {
-      throw new HttpsError('unauthenticated', 'Sign in first.');
-    }
-    const uid = request.auth.uid;
-    const shopId = typeof request.data?.shopId === 'string' ? request.data.shopId : null;
-    const syncDays = Math.min(
-      365,
-      Math.max(1, Number(request.data?.syncDays ?? 30) || 30),
-    );
-    const keystring = etsyKeystring.value().trim();
-    const sharedSecret = etsySharedSecret.value().trim();
-    const uspsCreds = {
-      consumerKey: uspsConsumerKey.value().trim(),
-      consumerSecret: uspsConsumerSecret.value().trim(),
-    };
-
-    const shopsCol = db().collection('users').doc(uid).collection('shops');
-    let shopDocs: QueryDocumentSnapshot[];
-    if (shopId) {
-      const one = await shopsCol.doc(shopId).get();
-      if (!one.exists) throw new HttpsError('not-found', 'Shop not found.');
-      shopDocs = [one as QueryDocumentSnapshot];
-    } else {
-      const all = await shopsCol.where('connected', '==', true).get();
-      shopDocs = all.docs;
-    }
-
-    if (!shopDocs.length) {
-      throw new HttpsError('failed-precondition', 'No connected Etsy shops to sync.');
-    }
-
-    const minCreated = Math.floor(Date.now() / 1000) - syncDays * 24 * 60 * 60;
-    const ordersCol = db().collection('users').doc(uid).collection('orders');
-    let created = 0;
-    let updated = 0;
-    let uspsEnriched = 0;
-    let uspsSkipped = 0;
-    let uspsError: string | null = null;
-
-    for (const shopDoc of shopDocs) {
-      const { accessToken, etsyShopId } = await ensureAccessToken(
-        uid,
-        shopDoc.id,
-        keystring,
-        sharedSecret,
+    try {
+      if (!request.auth?.uid) {
+        throw new HttpsError('unauthenticated', 'Sign in first.');
+      }
+      const uid = request.auth.uid;
+      const shopId = typeof request.data?.shopId === 'string' ? request.data.shopId : null;
+      const syncDays = Math.min(
+        365,
+        Math.max(1, Number(request.data?.syncDays ?? 30) || 30),
       );
-      const receipts = await fetchAllPaidReceipts(
-        {
-          keystring,
-          sharedSecret,
-          accessToken,
-          shopId: etsyShopId,
-        },
-        minCreated,
-      );
+      const keystring = etsyKeystring.value().trim();
+      const sharedSecret = etsySharedSecret.value().trim();
+      const uspsCreds = {
+        consumerKey: uspsConsumerKey.value().trim(),
+        consumerSecret: uspsConsumerSecret.value().trim(),
+      };
 
-      const imageCache = new Map<number, string | null>();
-      const uspsCache = new Map<string, Awaited<ReturnType<typeof fetchUspsTrackingStatus>>>();
+      if (!keystring || !sharedSecret) {
+        throw new HttpsError(
+          'failed-precondition',
+          'Etsy API secrets are missing on the server.',
+        );
+      }
 
-      for (const receipt of receipts) {
-        const fields = mapReceiptToOrderFields(receipt);
-        if (!fields.etsyReceiptId) continue;
+      const shopsCol = db().collection('users').doc(uid).collection('shops');
+      let shopDocs: QueryDocumentSnapshot[];
+      if (shopId) {
+        const one = await shopsCol.doc(shopId).get();
+        if (!one.exists) throw new HttpsError('not-found', 'Shop not found.');
+        shopDocs = [one as QueryDocumentSnapshot];
+      } else {
+        const all = await shopsCol.where('connected', '==', true).get();
+        shopDocs = all.docs;
+      }
 
-        let status: EtsyShippingStatus = fields.status;
-        let etsyStatusRaw = fields.etsyStatusRaw;
+      if (!shopDocs.length) {
+        throw new HttpsError('failed-precondition', 'No connected Etsy shops to sync.');
+      }
 
-        // Refine Pre-transit / In transit / Delivered via USPS when possible.
-        if (
-          fields.trackingNumber &&
-          (status === 'pre_transit' || status === 'in_transit' || status === 'delivered')
-        ) {
-          try {
-            const cacheKey = fields.trackingNumber.replace(/\s+/g, '');
-            let usps = uspsCache.get(cacheKey);
-            if (usps === undefined) {
-              usps = await fetchUspsTrackingStatus(
-                uspsCreds,
-                fields.trackingNumber,
-                fields.carrier,
-              );
-              uspsCache.set(cacheKey, usps);
-              // Gentle pacing for USPS ~60/hour default quota.
-              await new Promise((r) => setTimeout(r, 200));
-            }
-            if (usps?.status) {
-              status = usps.status;
-              etsyStatusRaw = [fields.etsyStatusRaw, usps.raw].filter(Boolean).join(' | ');
-              uspsEnriched += 1;
-            } else if (usps === null) {
-              uspsSkipped += 1;
-            }
-          } catch (err) {
-            uspsError =
-              err instanceof Error ? err.message.slice(0, 240) : 'USPS tracking lookup failed';
-            uspsSkipped += 1;
+      const minCreated = Math.floor(Date.now() / 1000) - syncDays * 24 * 60 * 60;
+      const ordersCol = db().collection('users').doc(uid).collection('orders');
+      let created = 0;
+      let updated = 0;
+      let uspsEnriched = 0;
+      let uspsSkipped = 0;
+      let uspsError: string | null = null;
+      const shopErrors: string[] = [];
+
+      for (const shopDoc of shopDocs) {
+        const shopLabel = String(shopDoc.get('name') || shopDoc.id);
+        try {
+          const { accessToken, etsyShopId } = await ensureAccessToken(
+            uid,
+            shopDoc.id,
+            keystring,
+            sharedSecret,
+          );
+          if (!Number.isFinite(etsyShopId) || etsyShopId <= 0) {
+            throw new Error(`Invalid etsyShopId on shop ${shopLabel}`);
           }
-        }
 
-        let imageUrl: string | null = null;
-        if (fields.listingId) {
-          if (!imageCache.has(fields.listingId)) {
-            imageCache.set(
-              fields.listingId,
-              await fetchListingImageUrl(
-                { keystring, sharedSecret, accessToken },
-                fields.listingId,
-              ),
-            );
-          }
-          imageUrl = imageCache.get(fields.listingId) ?? null;
-        }
-
-        const existing = await ordersCol
-          .where('etsyReceiptId', '==', fields.etsyReceiptId)
-          .limit(1)
-          .get();
-
-        const now = new Date().toISOString();
-        if (!existing.empty) {
-          const docId = existing.docs[0]!.id;
-          const prev = existing.docs[0]!;
-          await ordersCol.doc(docId).set(
+          const receipts = await fetchAllPaidReceipts(
             {
-              etsyOrderNumber: fields.etsyOrderNumber,
-              customerName: fields.customerName,
-              product: fields.product,
-              status,
-              etsyStatusRaw,
-              trackingNumber: fields.trackingNumber || prev.get('trackingNumber') || '',
-              carrier: fields.carrier || prev.get('carrier') || '',
-              ...(fields.dispatchedAt
-                ? { dispatchedAt: fields.dispatchedAt }
-                : {}),
-              ...(fields.shipByAt ? { shipByAt: fields.shipByAt } : {}),
-              ...(imageUrl && !prev.get('imageUrl') ? { imageUrl } : {}),
-              updatedAt: now,
+              keystring,
+              sharedSecret,
+              accessToken,
+              shopId: etsyShopId,
             },
+            minCreated,
+          );
+
+          const imageCache = new Map<number, string | null>();
+          const uspsCache = new Map<string, Awaited<ReturnType<typeof fetchUspsTrackingStatus>>>();
+
+          for (const receipt of receipts) {
+            const fields = mapReceiptToOrderFields(receipt);
+            if (!fields.etsyReceiptId) continue;
+
+            let status: EtsyShippingStatus = fields.status;
+            let etsyStatusRaw = fields.etsyStatusRaw;
+
+            // Refine Pre-transit / In transit / Delivered via USPS when possible.
+            if (
+              fields.trackingNumber &&
+              (status === 'pre_transit' || status === 'in_transit' || status === 'delivered')
+            ) {
+              try {
+                const cacheKey = fields.trackingNumber.replace(/\s+/g, '');
+                let usps = uspsCache.get(cacheKey);
+                if (usps === undefined) {
+                  usps = await fetchUspsTrackingStatus(
+                    uspsCreds,
+                    fields.trackingNumber,
+                    fields.carrier,
+                  );
+                  uspsCache.set(cacheKey, usps);
+                  // Gentle pacing for USPS ~60/hour default quota.
+                  await new Promise((r) => setTimeout(r, 200));
+                }
+                if (usps?.status) {
+                  status = usps.status;
+                  etsyStatusRaw = [fields.etsyStatusRaw, usps.raw].filter(Boolean).join(' | ');
+                  uspsEnriched += 1;
+                } else if (usps === null) {
+                  uspsSkipped += 1;
+                }
+              } catch (err) {
+                uspsError = errorMessage(err, 'USPS tracking lookup failed').slice(0, 240);
+                uspsSkipped += 1;
+              }
+            }
+
+            let imageUrl: string | null = null;
+            if (fields.listingId) {
+              if (!imageCache.has(fields.listingId)) {
+                imageCache.set(
+                  fields.listingId,
+                  await fetchListingImageUrl(
+                    { keystring, sharedSecret, accessToken },
+                    fields.listingId,
+                  ),
+                );
+              }
+              imageUrl = imageCache.get(fields.listingId) ?? null;
+            }
+
+            const existing = await ordersCol
+              .where('etsyReceiptId', '==', fields.etsyReceiptId)
+              .limit(1)
+              .get();
+
+            const now = new Date().toISOString();
+            if (!existing.empty) {
+              const docId = existing.docs[0]!.id;
+              const prev = existing.docs[0]!;
+              await ordersCol.doc(docId).set(
+                {
+                  etsyOrderNumber: fields.etsyOrderNumber,
+                  customerName: fields.customerName,
+                  product: fields.product,
+                  status,
+                  etsyStatusRaw,
+                  trackingNumber: fields.trackingNumber || prev.get('trackingNumber') || '',
+                  carrier: fields.carrier || prev.get('carrier') || '',
+                  ...(fields.dispatchedAt ? { dispatchedAt: fields.dispatchedAt } : {}),
+                  ...(fields.shipByAt ? { shipByAt: fields.shipByAt } : {}),
+                  ...(imageUrl && !prev.get('imageUrl') ? { imageUrl } : {}),
+                  updatedAt: now,
+                },
+                { merge: true },
+              );
+              updated += 1;
+            } else {
+              const id = createId('ord');
+              await ordersCol.doc(id).set({
+                id,
+                shopId: shopDoc.id,
+                etsyOrderNumber: fields.etsyOrderNumber,
+                etsyReceiptId: fields.etsyReceiptId,
+                customerName: fields.customerName,
+                product: fields.product,
+                imageUrl: imageUrl ?? '',
+                status,
+                etsyStatusRaw,
+                supplierName: '',
+                supplierOrderNumber: '',
+                trackingNumber: fields.trackingNumber,
+                carrier: fields.carrier,
+                ...(fields.dispatchedAt ? { dispatchedAt: fields.dispatchedAt } : {}),
+                ...(fields.shipByAt ? { shipByAt: fields.shipByAt } : {}),
+                createdAt: fields.createdAt,
+                updatedAt: now,
+              });
+              created += 1;
+            }
+          }
+
+          await shopDoc.ref.set(
+            { lastSyncAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
             { merge: true },
           );
-          updated += 1;
-        } else {
-          const id = createId('ord');
-          await ordersCol.doc(id).set({
-            id,
-            shopId: shopDoc.id,
-            etsyOrderNumber: fields.etsyOrderNumber,
-            etsyReceiptId: fields.etsyReceiptId,
-            customerName: fields.customerName,
-            product: fields.product,
-            imageUrl: imageUrl ?? '',
-            status,
-            etsyStatusRaw,
-            supplierName: '',
-            supplierOrderNumber: '',
-            trackingNumber: fields.trackingNumber,
-            carrier: fields.carrier,
-            ...(fields.dispatchedAt ? { dispatchedAt: fields.dispatchedAt } : {}),
-            ...(fields.shipByAt ? { shipByAt: fields.shipByAt } : {}),
-            createdAt: fields.createdAt,
-            updatedAt: now,
-          });
-          created += 1;
+        } catch (err) {
+          const msg = errorMessage(err);
+          console.error(`[etsySync] shop ${shopLabel}:`, msg);
+          shopErrors.push(`${shopLabel}: ${msg}`);
         }
       }
 
-      await shopDoc.ref.set(
-        { lastSyncAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-        { merge: true },
-      );
-    }
+      if (shopErrors.length && created === 0 && updated === 0) {
+        throw new HttpsError('failed-precondition', shopErrors.join('\n'), {
+          shopErrors,
+          fullMessage: shopErrors.join('\n'),
+        });
+      }
 
-    return {
-      created,
-      updated,
-      shops: shopDocs.length,
-      syncDays,
-      uspsEnriched,
-      uspsSkipped,
-      uspsError,
-    };
+      return {
+        created,
+        updated,
+        shops: shopDocs.length,
+        syncDays,
+        uspsEnriched,
+        uspsSkipped,
+        uspsError,
+        shopErrors,
+      };
+    } catch (err) {
+      rethrowAsHttpsError(err, 'Etsy sync failed');
+    }
   },
 );
 

@@ -28,6 +28,7 @@ export async function syncEtsyOrders(input?: {
   uspsEnriched?: number;
   uspsSkipped?: number;
   uspsError?: string | null;
+  shopErrors?: string[];
 }> {
   const callable = httpsCallable<
     { shopId?: string; syncDays?: number },
@@ -39,6 +40,7 @@ export async function syncEtsyOrders(input?: {
       uspsEnriched?: number;
       uspsSkipped?: number;
       uspsError?: string | null;
+      shopErrors?: string[];
     }
   >(functions(), 'etsySync');
   const result = await callable(input ?? {});

@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { LayoutDashboard, Settings, Store } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { ErrorPanel } from '@/components/layout/ErrorPanel';
 import { ShopSwitcher } from '@/components/shops/ShopSwitcher';
 import { ShopProvider } from '@/context/ShopContext';
 import { useAuth } from '@/context/AuthContext';
@@ -16,6 +17,7 @@ export function AppShell() {
 
   return (
     <ShopProvider>
+      <ErrorPanel />
       <div className="mx-auto flex min-h-screen max-w-6xl flex-col px-4 py-6 sm:px-6 lg:px-8">
         {demoMode ? (
           <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
