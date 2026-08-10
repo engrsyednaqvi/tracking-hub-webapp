@@ -11,6 +11,8 @@ import { cn } from '@/lib/cn';
 
 const ETSY_CALLBACK =
   'https://us-central1-tracking-hub-webapp-29401.cloudfunctions.net/etsyOAuthCallback';
+const ETSY_WEBHOOK =
+  'https://us-central1-tracking-hub-webapp-29401.cloudfunctions.net/etsyWebhook';
 
 export function ShopsPage() {
   const { user, demoMode } = useAuth();
@@ -119,11 +121,28 @@ export function ShopsPage() {
         </div>
       ) : null}
 
-      <section className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-        <p className="font-medium">Callback URL (same for every Seller app)</p>
-        <code className="mt-2 block break-all rounded-lg bg-white/80 px-2 py-1.5 text-xs">
-          {ETSY_CALLBACK}
-        </code>
+      <section className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 space-y-3">
+        <div>
+          <p className="font-medium">OAuth callback URL (same for every Seller app)</p>
+          <code className="mt-2 block break-all rounded-lg bg-white/80 px-2 py-1.5 text-xs">
+            {ETSY_CALLBACK}
+          </code>
+        </div>
+        <div>
+          <p className="font-medium">Webhook URL (auto-sync when Etsy has new/updated orders)</p>
+          <p className="mt-1 text-xs text-amber-900/80">
+            In each Seller app → Webhook portal → Add Endpoint for{' '}
+            <span className="font-medium">order.paid</span>,{' '}
+            <span className="font-medium">order.canceled</span>,{' '}
+            <span className="font-medium">order.shipped</span>,{' '}
+            <span className="font-medium">order.delivered</span>. Paste each signing secret
+            (whsec_…) into Firebase secret <span className="font-medium">ETSY_WEBHOOK_SECRETS</span>{' '}
+            (one per line). A 30‑minute server sync also runs with the site closed.
+          </p>
+          <code className="mt-2 block break-all rounded-lg bg-white/80 px-2 py-1.5 text-xs">
+            {ETSY_WEBHOOK}
+          </code>
+        </div>
       </section>
 
       <section className="rounded-2xl border border-surface-line bg-white p-4 shadow-sm">

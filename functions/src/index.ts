@@ -7,24 +7,26 @@ import {
 } from 'firebase-admin/firestore';
 import { defineSecret, defineString } from 'firebase-functions/params';
 import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import {
   buildAuthorizeUrl,
   exchangeAuthorizationCode,
-  fetchAllPaidReceipts,
   fetchAllShopsForUser,
-  fetchListingImageUrl,
-  mapReceiptToOrderFields,
-  refreshAccessToken,
   userIdFromAccessToken,
-  type EtsyShippingStatus,
 } from './etsy/api';
+import { type OAuthAppCreds } from './etsy/credentials';
 import {
   statusesFromShipmentsByOrder,
   type ShipmentsByOrderResponse,
 } from './etsy/missionControl';
 import { createCodeChallenge, createCodeVerifier, createOAuthState } from './etsy/pkce';
+import { parseWebhookSecrets, verifyEtsyWebhookSignature } from './etsy/webhookSignature';
 import { errorMessage, rethrowAsHttpsError } from './errors';
-import { fetchUspsTrackingStatus } from './usps/tracking';
+import {
+  findShopsByEtsyShopId,
+  listAllConnectedShops,
+  syncShopDocuments,
+} from './sync/etsyOrders';
 
 // Gen2 can load modules more than once — always bind a default app.
 const adminApp = getApps()[0] ?? initializeApp();
@@ -33,12 +35,17 @@ const etsyKeystring = defineSecret('ETSY_KEYSTRING');
 const etsySharedSecret = defineSecret('ETSY_SHARED_SECRET');
 const uspsConsumerKey = defineSecret('USPS_CONSUMER_KEY');
 const uspsConsumerSecret = defineSecret('USPS_CONSUMER_SECRET');
+/** Newline or comma-separated whsec_… secrets (one per Seller app webhook). */
+const etsyWebhookSecrets = defineSecret('ETSY_WEBHOOK_SECRETS');
 const webappOrigin = defineString('WEBAPP_ORIGIN', {
   default: 'https://engrsyednaqvi.github.io/tracking-hub-webapp',
 });
 
 const REDIRECT_URI =
   'https://us-central1-tracking-hub-webapp-29401.cloudfunctions.net/etsyOAuthCallback';
+
+const WEBHOOK_URL =
+  'https://us-central1-tracking-hub-webapp-29401.cloudfunctions.net/etsyWebhook';
 
 function db() {
   return getFirestore(adminApp);
@@ -47,8 +54,6 @@ function db() {
 function createId(prefix: string): string {
   return `${prefix}_${randomBytes(8).toString('hex')}`;
 }
-
-type OAuthAppCreds = { keystring: string; sharedSecret: string };
 
 /** Resolve Etsy app keys: per-request → saved shop creds → global secrets. */
 async function resolveEtsyAppCreds(
@@ -94,6 +99,20 @@ async function resolveEtsyAppCreds(
   return { keystring, sharedSecret };
 }
 
+function globalFallbackCreds(): OAuthAppCreds {
+  return {
+    keystring: etsyKeystring.value().trim(),
+    sharedSecret: etsySharedSecret.value().trim(),
+  };
+}
+
+function uspsCreds() {
+  return {
+    consumerKey: uspsConsumerKey.value().trim(),
+    consumerSecret: uspsConsumerSecret.value().trim(),
+  };
+}
+
 /** Start Etsy OAuth — returns authorize URL for the browser. */
 export const etsyOAuthStart = onCall(
   { secrets: [etsyKeystring, etsySharedSecret], cors: true },
@@ -133,7 +152,7 @@ export const etsyOAuthStart = onCall(
   },
 );
 
-/** Etsy redirects here after consent. */
+/** OAuth redirect callback from Etsy. */
 export const etsyOAuthCallback = onRequest(
   { secrets: [etsyKeystring, etsySharedSecret], cors: false },
   async (req, res) => {
@@ -275,145 +294,6 @@ export const etsyOAuthCallback = onRequest(
   },
 );
 
-async function markShopNeedsReconnect(
-  uid: string,
-  shopDocId: string,
-  reason: string,
-): Promise<void> {
-  const now = new Date().toISOString();
-  await db().collection('users').doc(uid).collection('shops').doc(shopDocId).set(
-    {
-      connected: false,
-      reconnectRequired: true,
-      reconnectReason: reason.slice(0, 400),
-      updatedAt: now,
-    },
-    { merge: true },
-  );
-  // Keep keystring/sharedSecret so Reconnect can reuse that shop’s Seller app.
-  await db()
-    .collection('users')
-    .doc(uid)
-    .collection('etsyCredentials')
-    .doc(shopDocId)
-    .set(
-      {
-        accessToken: '',
-        refreshToken: '',
-        expiresAt: 0,
-        updatedAt: now,
-      },
-      { merge: true },
-    );
-}
-
-function isInvalidEtsyGrant(err: unknown): boolean {
-  const msg = errorMessage(err).toLowerCase();
-  return (
-    msg.includes('invalid_grant') ||
-    msg.includes('client_id is invalid') ||
-    msg.includes('invalid_client')
-  );
-}
-
-async function ensureAccessToken(
-  uid: string,
-  shopDocId: string,
-  globalFallback: OAuthAppCreds,
-): Promise<{
-  accessToken: string;
-  etsyShopId: number;
-  keystring: string;
-  sharedSecret: string;
-}> {
-  const credRef = db()
-    .collection('users')
-    .doc(uid)
-    .collection('etsyCredentials')
-    .doc(shopDocId);
-  const snap = await credRef.get();
-  if (!snap.exists) {
-    throw new HttpsError('failed-precondition', 'Shop is not connected to Etsy.');
-  }
-  const cred = snap.data() as {
-    accessToken: string;
-    refreshToken: string;
-    expiresAt: number;
-    etsyShopId: number;
-    etsyClientId?: string;
-    keystring?: string;
-    sharedSecret?: string;
-  };
-
-  const keystring = String(cred.keystring || globalFallback.keystring).trim();
-  const sharedSecret = String(cred.sharedSecret || globalFallback.sharedSecret).trim();
-  if (!keystring || !sharedSecret) {
-    const reason =
-      'Missing Etsy Seller app keys for this shop. Paste that account’s keystring + secret and Connect.';
-    await markShopNeedsReconnect(uid, shopDocId, reason);
-    throw new HttpsError('failed-precondition', reason);
-  }
-
-  // Tokens are bound to the Etsy app (keystring) that issued them.
-  if (cred.etsyClientId && cred.etsyClientId !== keystring) {
-    const reason =
-      'Saved tokens do not match this shop’s Etsy app keys. Reconnect with the correct Seller app.';
-    await markShopNeedsReconnect(uid, shopDocId, reason);
-    throw new HttpsError('failed-precondition', reason);
-  }
-
-  if (cred.accessToken && cred.expiresAt > Date.now() + 60_000) {
-    return {
-      accessToken: cred.accessToken,
-      etsyShopId: Number(cred.etsyShopId),
-      keystring,
-      sharedSecret,
-    };
-  }
-
-  if (!cred.refreshToken) {
-    const reason = 'Etsy refresh token missing — reconnect this shop (Connect Etsy).';
-    await markShopNeedsReconnect(uid, shopDocId, reason);
-    throw new HttpsError('failed-precondition', reason);
-  }
-
-  let token: Awaited<ReturnType<typeof refreshAccessToken>>;
-  try {
-    token = await refreshAccessToken({
-      keystring,
-      sharedSecret,
-      refreshToken: cred.refreshToken,
-    });
-  } catch (err) {
-    const detail = errorMessage(err);
-    const reason = isInvalidEtsyGrant(err)
-      ? `Etsy rejected this shop’s tokens. Reconnect with that account’s Seller app keys. ${detail}`
-      : `Etsy token refresh failed — reconnect this shop. ${detail}`;
-    await markShopNeedsReconnect(uid, shopDocId, reason);
-    throw new HttpsError('failed-precondition', reason);
-  }
-
-  const expiresAt = Date.now() + Math.max(60, token.expires_in - 60) * 1000;
-  await credRef.set(
-    {
-      accessToken: token.access_token,
-      refreshToken: token.refresh_token,
-      expiresAt,
-      etsyClientId: keystring,
-      keystring,
-      sharedSecret,
-      updatedAt: new Date().toISOString(),
-    },
-    { merge: true },
-  );
-  return {
-    accessToken: token.access_token,
-    etsyShopId: Number(cred.etsyShopId),
-    keystring,
-    sharedSecret,
-  };
-}
-
 /** Sync paid receipts for one shop (or all connected shops). */
 export const etsySync = onCall(
   {
@@ -432,14 +312,6 @@ export const etsySync = onCall(
         365,
         Math.max(1, Number(request.data?.syncDays ?? 30) || 30),
       );
-      const globalFallback: OAuthAppCreds = {
-        keystring: etsyKeystring.value().trim(),
-        sharedSecret: etsySharedSecret.value().trim(),
-      };
-      const uspsCreds = {
-        consumerKey: uspsConsumerKey.value().trim(),
-        consumerSecret: uspsConsumerSecret.value().trim(),
-      };
 
       const shopsCol = db().collection('users').doc(uid).collection('shops');
       let shopDocs: QueryDocumentSnapshot[];
@@ -452,7 +324,6 @@ export const etsySync = onCall(
         shopDocs = all.docs;
       }
 
-      // Never sync shops waiting for a fresh OAuth (stale tokens after app key change).
       shopDocs = shopDocs.filter((doc) => doc.get('reconnectRequired') !== true);
 
       if (!shopDocs.length) {
@@ -462,185 +333,208 @@ export const etsySync = onCall(
         );
       }
 
-      const minCreated = Math.floor(Date.now() / 1000) - syncDays * 24 * 60 * 60;
-      const ordersCol = db().collection('users').doc(uid).collection('orders');
-      let created = 0;
-      let updated = 0;
-      let uspsEnriched = 0;
-      let uspsSkipped = 0;
-      let uspsError: string | null = null;
-      const shopErrors: string[] = [];
+      const result = await syncShopDocuments({
+        uid,
+        shopDocs,
+        syncDays,
+        globalFallback: globalFallbackCreds(),
+        uspsCreds: uspsCreds(),
+        enrichUsps: true,
+      });
 
-      for (const shopDoc of shopDocs) {
-        const shopLabel = String(shopDoc.get('name') || shopDoc.id);
-        try {
-          const { accessToken, etsyShopId, keystring, sharedSecret } = await ensureAccessToken(
-            uid,
-            shopDoc.id,
-            globalFallback,
-          );
-          if (!Number.isFinite(etsyShopId) || etsyShopId <= 0) {
-            throw new Error(`Invalid etsyShopId on shop ${shopLabel}`);
-          }
-
-          let receipts: Awaited<ReturnType<typeof fetchAllPaidReceipts>>;
-          try {
-            receipts = await fetchAllPaidReceipts(
-              {
-                keystring,
-                sharedSecret,
-                accessToken,
-                shopId: etsyShopId,
-              },
-              minCreated,
-            );
-          } catch (err) {
-            const detail = errorMessage(err);
-            if (/\b(401|403)\b/.test(detail) || /invalid.?token|unauthorized/i.test(detail)) {
-              const reason = `Etsy API rejected this shop’s access token. Reconnect via Connect Etsy. ${detail}`;
-              await markShopNeedsReconnect(uid, shopDoc.id, reason);
-              throw new HttpsError('failed-precondition', reason);
-            }
-            throw err;
-          }
-
-          const imageCache = new Map<number, string | null>();
-          const uspsCache = new Map<string, Awaited<ReturnType<typeof fetchUspsTrackingStatus>>>();
-
-          for (const receipt of receipts) {
-            const fields = mapReceiptToOrderFields(receipt);
-            if (!fields.etsyReceiptId) continue;
-
-            let status: EtsyShippingStatus = fields.status;
-            let etsyStatusRaw = fields.etsyStatusRaw;
-
-            // Refine Pre-transit / In transit / Delivered via USPS when possible.
-            if (
-              fields.trackingNumber &&
-              (status === 'pre_transit' || status === 'in_transit' || status === 'delivered')
-            ) {
-              try {
-                const cacheKey = fields.trackingNumber.replace(/\s+/g, '');
-                let usps = uspsCache.get(cacheKey);
-                if (usps === undefined) {
-                  usps = await fetchUspsTrackingStatus(
-                    uspsCreds,
-                    fields.trackingNumber,
-                    fields.carrier,
-                  );
-                  uspsCache.set(cacheKey, usps);
-                  // Gentle pacing for USPS ~60/hour default quota.
-                  await new Promise((r) => setTimeout(r, 200));
-                }
-                if (usps?.status) {
-                  status = usps.status;
-                  etsyStatusRaw = [fields.etsyStatusRaw, usps.raw].filter(Boolean).join(' | ');
-                  uspsEnriched += 1;
-                } else if (usps === null) {
-                  uspsSkipped += 1;
-                }
-              } catch (err) {
-                uspsError = errorMessage(err, 'USPS tracking lookup failed').slice(0, 240);
-                uspsSkipped += 1;
-              }
-            }
-
-            let imageUrl: string | null = null;
-            if (fields.listingId) {
-              if (!imageCache.has(fields.listingId)) {
-                imageCache.set(
-                  fields.listingId,
-                  await fetchListingImageUrl(
-                    { keystring, sharedSecret, accessToken },
-                    fields.listingId,
-                  ),
-                );
-              }
-              imageUrl = imageCache.get(fields.listingId) ?? null;
-            }
-
-            const existing = await ordersCol
-              .where('etsyReceiptId', '==', fields.etsyReceiptId)
-              .limit(1)
-              .get();
-
-            const now = new Date().toISOString();
-            if (!existing.empty) {
-              const docId = existing.docs[0]!.id;
-              const prev = existing.docs[0]!;
-              await ordersCol.doc(docId).set(
-                {
-                  etsyOrderNumber: fields.etsyOrderNumber,
-                  customerName: fields.customerName,
-                  product: fields.product,
-                  status,
-                  etsyStatusRaw,
-                  trackingNumber: fields.trackingNumber || prev.get('trackingNumber') || '',
-                  carrier: fields.carrier || prev.get('carrier') || '',
-                  ...(fields.dispatchedAt ? { dispatchedAt: fields.dispatchedAt } : {}),
-                  ...(fields.shipByAt ? { shipByAt: fields.shipByAt } : {}),
-                  ...(imageUrl && !prev.get('imageUrl') ? { imageUrl } : {}),
-                  updatedAt: now,
-                },
-                { merge: true },
-              );
-              updated += 1;
-            } else {
-              const id = createId('ord');
-              await ordersCol.doc(id).set({
-                id,
-                shopId: shopDoc.id,
-                etsyOrderNumber: fields.etsyOrderNumber,
-                etsyReceiptId: fields.etsyReceiptId,
-                customerName: fields.customerName,
-                product: fields.product,
-                imageUrl: imageUrl ?? '',
-                status,
-                etsyStatusRaw,
-                supplierName: '',
-                supplierOrderNumber: '',
-                trackingNumber: fields.trackingNumber,
-                carrier: fields.carrier,
-                ...(fields.dispatchedAt ? { dispatchedAt: fields.dispatchedAt } : {}),
-                ...(fields.shipByAt ? { shipByAt: fields.shipByAt } : {}),
-                createdAt: fields.createdAt,
-                updatedAt: now,
-              });
-              created += 1;
-            }
-          }
-
-          await shopDoc.ref.set(
-            { lastSyncAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-            { merge: true },
-          );
-        } catch (err) {
-          const msg = errorMessage(err);
-          console.error(`[etsySync] shop ${shopLabel}:`, msg);
-          shopErrors.push(`${shopLabel}: ${msg}`);
-        }
-      }
-
-      if (shopErrors.length && created === 0 && updated === 0) {
-        throw new HttpsError('failed-precondition', shopErrors.join('\n'), {
-          shopErrors,
-          fullMessage: shopErrors.join('\n'),
+      if (result.shopErrors.length && result.created === 0 && result.updated === 0) {
+        throw new HttpsError('failed-precondition', result.shopErrors.join('\n'), {
+          shopErrors: result.shopErrors,
+          fullMessage: result.shopErrors.join('\n'),
         });
       }
 
-      return {
-        created,
-        updated,
-        shops: shopDocs.length,
-        syncDays,
-        uspsEnriched,
-        uspsSkipped,
-        uspsError,
-        shopErrors,
-      };
+      return result;
     } catch (err) {
       rethrowAsHttpsError(err, 'Etsy sync failed');
     }
+  },
+);
+
+/**
+ * Etsy order webhooks (order.paid / canceled / shipped / delivered).
+ * Configure this URL in each Seller app’s Webhook portal.
+ */
+export const etsyWebhook = onRequest(
+  {
+    secrets: [
+      etsyKeystring,
+      etsySharedSecret,
+      uspsConsumerKey,
+      uspsConsumerSecret,
+      etsyWebhookSecrets,
+    ],
+    timeoutSeconds: 120,
+    memory: '512MiB',
+  },
+  async (req, res) => {
+    if (req.method === 'GET') {
+      res.status(200).json({
+        ok: true,
+        endpoint: WEBHOOK_URL,
+        events: ['order.paid', 'order.canceled', 'order.shipped', 'order.delivered'],
+      });
+      return;
+    }
+
+    if (req.method !== 'POST') {
+      res.status(405).send('Method not allowed');
+      return;
+    }
+
+    const rawBody =
+      typeof req.rawBody !== 'undefined'
+        ? Buffer.isBuffer(req.rawBody)
+          ? req.rawBody.toString('utf8')
+          : String(req.rawBody)
+        : typeof req.body === 'string'
+          ? req.body
+          : JSON.stringify(req.body ?? {});
+
+    const secrets = parseWebhookSecrets(etsyWebhookSecrets.value());
+    const webhookId = String(req.get('webhook-id') || '');
+    const webhookTimestamp = String(req.get('webhook-timestamp') || '');
+    const webhookSignature = String(req.get('webhook-signature') || '');
+
+    if (!secrets.length) {
+      console.warn(
+        '[etsyWebhook] ETSY_WEBHOOK_SECRETS not set (or still whsec_pending). Rejecting.',
+      );
+      res.status(503).json({
+        error: 'Webhook secrets not configured. Set ETSY_WEBHOOK_SECRETS in Firebase.',
+      });
+      return;
+    }
+
+    const valid = verifyEtsyWebhookSignature({
+      rawBody,
+      webhookId,
+      webhookTimestamp,
+      webhookSignature,
+      secrets,
+    });
+    if (!valid) {
+      console.warn('[etsyWebhook] invalid signature');
+      res.status(401).json({ error: 'Invalid webhook signature' });
+      return;
+    }
+
+    let payload: { event_type?: string; shop_id?: string | number; resource_url?: string };
+    try {
+      payload = JSON.parse(rawBody) as typeof payload;
+    } catch {
+      res.status(400).json({ error: 'Invalid JSON' });
+      return;
+    }
+
+    const eventType = String(payload.event_type || '');
+    const shopId = payload.shop_id;
+    if (shopId === undefined || shopId === null || shopId === '') {
+      res.status(400).json({ error: 'Missing shop_id' });
+      return;
+    }
+
+    console.log(`[etsyWebhook] ${eventType} shop=${shopId}`);
+
+    const matches = await findShopsByEtsyShopId(shopId);
+    if (!matches.length) {
+      // Acknowledge so Etsy does not retry forever for unknown shops.
+      res.status(200).json({ ok: true, synced: 0, reason: 'no_matching_shop' });
+      return;
+    }
+
+    let created = 0;
+    let updated = 0;
+    const errors: string[] = [];
+
+    for (const { uid, shopDoc } of matches) {
+      try {
+        const result = await syncShopDocuments({
+          uid,
+          shopDocs: [shopDoc],
+          syncDays: 14,
+          globalFallback: globalFallbackCreds(),
+          uspsCreds: uspsCreds(),
+          // Fast path — scheduled job does USPS enrichment.
+          enrichUsps: false,
+        });
+        created += result.created;
+        updated += result.updated;
+        if (result.shopErrors.length) errors.push(...result.shopErrors);
+      } catch (err) {
+        errors.push(errorMessage(err));
+      }
+    }
+
+    res.status(200).json({
+      ok: true,
+      eventType,
+      shops: matches.length,
+      created,
+      updated,
+      errors,
+    });
+  },
+);
+
+/**
+ * Background sync for all connected shops (works with the website closed).
+ * Complements Etsy webhooks for missed events + USPS enrichment.
+ */
+export const etsyScheduledSync = onSchedule(
+  {
+    schedule: 'every 30 minutes',
+    timeZone: 'America/New_York',
+    secrets: [etsyKeystring, etsySharedSecret, uspsConsumerKey, uspsConsumerSecret],
+    timeoutSeconds: 540,
+    memory: '1GiB',
+  },
+  async () => {
+    const shops = await listAllConnectedShops();
+    console.log(`[etsyScheduledSync] ${shops.length} connected shop(s)`);
+
+    // Group by uid so we reuse one orders collection write path per user.
+    const byUid = new Map<string, QueryDocumentSnapshot[]>();
+    for (const { uid, shopDoc } of shops) {
+      const list = byUid.get(uid) ?? [];
+      list.push(shopDoc);
+      byUid.set(uid, list);
+    }
+
+    let created = 0;
+    let updated = 0;
+    let shopErrors = 0;
+
+    for (const [uid, shopDocs] of byUid) {
+      try {
+        const result = await syncShopDocuments({
+          uid,
+          shopDocs,
+          syncDays: 30,
+          globalFallback: globalFallbackCreds(),
+          uspsCreds: uspsCreds(),
+          enrichUsps: true,
+        });
+        created += result.created;
+        updated += result.updated;
+        shopErrors += result.shopErrors.length;
+        if (result.shopErrors.length) {
+          console.error(`[etsyScheduledSync] uid=${uid}`, result.shopErrors.join(' | '));
+        }
+      } catch (err) {
+        shopErrors += 1;
+        console.error(`[etsyScheduledSync] uid=${uid}`, errorMessage(err));
+      }
+    }
+
+    console.log(
+      `[etsyScheduledSync] done created=${created} updated=${updated} shopErrors=${shopErrors}`,
+    );
   },
 );
 
