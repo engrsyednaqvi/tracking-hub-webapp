@@ -1,7 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { LayoutDashboard, Settings, Store } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { LeftStatusRail } from '@/components/layout/LeftStatusRail';
 import { ShopSwitcher } from '@/components/shops/ShopSwitcher';
 import { ShopProvider } from '@/context/ShopContext';
 import { useAuth } from '@/context/AuthContext';
@@ -17,8 +16,7 @@ export function AppShell() {
 
   return (
     <ShopProvider>
-      <LeftStatusRail />
-      <div className="mx-auto flex min-h-screen max-w-6xl flex-col px-4 py-6 sm:px-6 lg:px-8 lg:pl-8">
+      <div className="mx-auto flex min-h-screen max-w-6xl flex-col px-4 py-6 sm:px-6 lg:px-8">
         {demoMode ? (
           <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
             Running in demo mode. Add Firebase env vars (see README) to enable real accounts and sync.
