@@ -8,7 +8,7 @@ import { cn } from '@/lib/cn';
 /** Fixed left rail: Reconnect / Sync + all status/error text. */
 export function LeftStatusRail() {
   const { demoMode } = useAuth();
-  const { notices, dismissNotice, clearErrors } = useAppErrors();
+  const { notices, dismissNotice, clearErrors, etsyAuthUrl, setEtsyAuthUrl } = useAppErrors();
   const { shops, syncing, syncAll } = useShops();
   const { connectEtsy, connecting } = useEtsyConnect();
 
@@ -22,16 +22,26 @@ export function LeftStatusRail() {
       className="fixed left-3 top-16 z-50 flex w-[min(22rem,calc(100vw-1.5rem))] flex-col gap-2"
       aria-live="polite"
     >
-      {needsReconnect.length ? (
-        <button
-          type="button"
-          disabled={demoMode || connecting}
-          onClick={() => void connectEtsy()}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-rose-700 px-3 py-2.5 text-sm font-medium text-white shadow-lg disabled:opacity-50"
+      <button
+        type="button"
+        disabled={demoMode || connecting}
+        onClick={() => void connectEtsy()}
+        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-rose-700 px-3 py-2.5 text-sm font-medium text-white shadow-lg disabled:opacity-50"
+      >
+        <Link2 className="h-4 w-4" />
+        {connecting ? 'Opening Etsy…' : needsReconnect.length ? 'Reconnect Etsy (login)' : 'Connect Etsy'}
+      </button>
+
+      {etsyAuthUrl ? (
+        <a
+          href={etsyAuthUrl}
+          target="_blank"
+          rel="noreferrer"
+          onClick={() => setEtsyAuthUrl(null)}
+          className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-teal-300 bg-teal-50 px-3 py-2.5 text-sm font-medium text-teal-900 shadow-lg hover:bg-teal-100"
         >
-          <Link2 className="h-4 w-4" />
-          {connecting ? 'Redirecting to Etsy…' : 'Reconnect Etsy (login)'}
-        </button>
+          Open Etsy login ↗
+        </a>
       ) : null}
 
       <button

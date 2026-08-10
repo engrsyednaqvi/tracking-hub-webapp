@@ -22,6 +22,9 @@ interface ErrorContextValue {
   notices: AppNotice[];
   /** @deprecated use notices */
   errors: AppNotice[];
+  /** Manual fallback when browser blocks OAuth redirect. */
+  etsyAuthUrl: string | null;
+  setEtsyAuthUrl: (url: string | null) => void;
   reportError: (title: string, err: unknown) => void;
   reportInfo: (title: string, detail: string) => void;
   dismissNotice: (id: string) => void;
@@ -33,6 +36,7 @@ const ErrorContext = createContext<ErrorContextValue | null>(null);
 
 export function ErrorProvider({ children }: { children: ReactNode }) {
   const [notices, setNotices] = useState<AppNotice[]>([]);
+  const [etsyAuthUrl, setEtsyAuthUrl] = useState<string | null>(null);
 
   const push = useCallback((kind: AppNoticeKind, title: string, detail: string) => {
     const entry: AppNotice = {
@@ -70,13 +74,15 @@ export function ErrorProvider({ children }: { children: ReactNode }) {
     () => ({
       notices,
       errors: notices.filter((n) => n.kind === 'error'),
+      etsyAuthUrl,
+      setEtsyAuthUrl,
       reportError,
       reportInfo,
       dismissNotice,
       dismissError: dismissNotice,
       clearErrors,
     }),
-    [notices, reportError, reportInfo, dismissNotice, clearErrors],
+    [notices, etsyAuthUrl, reportError, reportInfo, dismissNotice, clearErrors],
   );
 
   return <ErrorContext.Provider value={value}>{children}</ErrorContext.Provider>;

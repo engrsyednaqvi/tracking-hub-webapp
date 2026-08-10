@@ -14,7 +14,16 @@ export async function startEtsyOAuth(): Promise<{ authUrl: string; redirectUri: 
     'etsyOAuthStart',
   );
   const result = await callable({});
-  return result.data;
+  const data = result.data;
+  if (!data || typeof data !== 'object') {
+    throw new Error(`etsyOAuthStart returned unexpected data: ${JSON.stringify(data)}`);
+  }
+  if (!data.authUrl || typeof data.authUrl !== 'string') {
+    throw new Error(
+      `etsyOAuthStart missing authUrl. Got: ${JSON.stringify(data)}`,
+    );
+  }
+  return data;
 }
 
 export async function syncEtsyOrders(input?: {
