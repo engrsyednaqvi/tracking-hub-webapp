@@ -29,6 +29,7 @@ interface ShopContextValue {
   loading: boolean;
   error: string | null;
   syncing: boolean;
+  syncMessage: string | null;
   syncAll: () => Promise<void>;
   syncShop: (shopId: string) => Promise<void>;
 }
@@ -54,6 +55,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(!demoMode);
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const syncingRef = useRef(false);
 
   useEffect(() => {
@@ -124,12 +126,10 @@ export function ShopProvider({ children }: { children: ReactNode }) {
       if (syncingRef.current) return;
       const syncable = shops.filter((s) => s.connected && !s.reconnectRequired);
       if (!syncable.length) {
-        if (!opts?.silent) {
-          reportInfo(
-            'Sync skipped',
-            'No shops ready to sync. Click “Reconnect Etsy (login)” on the left, approve on Etsy, then sync.',
-          );
-        }
+        const msg =
+          'No shops ready to sync. On Shops, connect each shop with its Seller app keys first.';
+        setSyncMessage(msg);
+        if (!opts?.silent) reportInfo('Sync skipped', msg);
         return;
       }
 
@@ -138,11 +138,15 @@ export function ShopProvider({ children }: { children: ReactNode }) {
 
       try {
         const result = await syncEtsyOrders({ shopId, syncDays: 30 });
-        reportInfo(opts?.silent ? 'Auto-sync' : 'Sync complete', formatSyncBanner(result));
+        const banner = formatSyncBanner(result);
+        setSyncMessage(banner);
+        reportInfo(opts?.silent ? 'Auto-sync' : 'Sync complete', banner);
         if (result.shopErrors?.length) {
           reportError('Sync shop errors', result.shopErrors.join('\n'));
         }
       } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        setSyncMessage(detail);
         reportError(opts?.silent ? 'Auto-sync failed' : 'Etsy sync failed', err);
       } finally {
         syncingRef.current = false;
@@ -182,10 +186,11 @@ export function ShopProvider({ children }: { children: ReactNode }) {
       loading,
       error,
       syncing,
+      syncMessage,
       syncAll,
       syncShop,
     };
-  }, [shops, orders, activeShopId, loading, error, syncing, syncAll, syncShop]);
+  }, [shops, orders, activeShopId, loading, error, syncing, syncMessage, syncAll, syncShop]);
 
   return <ShopContext.Provider value={value}>{children}</ShopContext.Provider>;
 }

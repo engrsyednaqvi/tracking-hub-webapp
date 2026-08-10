@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { LayoutDashboard, Settings, Store } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { GlobalSyncButton } from '@/components/layout/GlobalSyncButton';
 import { ShopSwitcher } from '@/components/shops/ShopSwitcher';
 import { ShopProvider } from '@/context/ShopContext';
 import { useAuth } from '@/context/AuthContext';
@@ -34,7 +35,10 @@ export function AppShell() {
             </p>
           </div>
           <div className="flex flex-col items-stretch gap-2 sm:items-end">
-            <ShopSwitcher />
+            <div className="flex flex-wrap items-start justify-end gap-2">
+              <GlobalSyncButton />
+              <ShopSwitcher />
+            </div>
             {user ? (
               <button
                 type="button"
