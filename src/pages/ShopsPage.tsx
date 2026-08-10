@@ -5,7 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useAppErrors } from '@/context/ErrorContext';
 import { useShops } from '@/context/ShopContext';
 import { formatFirebaseError } from '@/lib/errors';
-import { startEtsyOAuth, syncEtsyOrders } from '@/lib/functions';
+import { startEtsyOAuth } from '@/lib/functions';
 import { createShop, deleteShop } from '@/services/shops';
 
 const ETSY_CALLBACK =
@@ -14,20 +14,30 @@ const ETSY_CALLBACK =
 export function ShopsPage() {
   const { user, demoMode } = useAuth();
   const { reportError } = useAppErrors();
-  const { shops, setActiveShopId, loading, error } = useShops();
+  const {
+    shops,
+    setActiveShopId,
+    loading,
+    error,
+    syncing,
+    syncMessage,
+    syncAll,
+    syncShop,
+  } = useShops();
   const [searchParams, setSearchParams] = useSearchParams();
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
-  const [syncingId, setSyncingId] = useState<string | 'all' | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
+
+  const needsReconnect = shops.filter((s) => s.reconnectRequired || (!s.connected && s.etsyShopId));
 
   useEffect(() => {
     const etsy = searchParams.get('etsy');
     if (!etsy) return;
     if (etsy === 'connected') {
       const shop = searchParams.get('shop');
-      setBanner(shop ? `Connected “${shop}”. Click Sync to pull orders.` : 'Etsy shop connected.');
+      setBanner(shop ? `Connected “${shop}”. Sync will pull orders.` : 'Etsy shop connected.');
     } else if (etsy === 'error') {
       setFormError(searchParams.get('message') || 'Etsy connect failed.');
     }
@@ -73,49 +83,18 @@ export function ShopsPage() {
     }
   }
 
-  async function onSync(shopId?: string) {
-    if (demoMode || !user) return;
-    setSyncingId(shopId ?? 'all');
-    setFormError(null);
-    setBanner(null);
-    try {
-      const result = await syncEtsyOrders({ shopId, syncDays: 30 });
-      const uspsBit =
-        typeof result.uspsEnriched === 'number'
-          ? ` · USPS refined ${result.uspsEnriched}`
-          : '';
-      const uspsErr = result.uspsError ? ` · USPS: ${result.uspsError}` : '';
-      const shopErrBit = result.shopErrors?.length
-        ? ` · Shop errors: ${result.shopErrors.length}`
-        : '';
-      setBanner(
-        `Synced ${result.shops} shop(s): ${result.created} new, ${result.updated} updated (last ${result.syncDays} days)${uspsBit}${uspsErr}${shopErrBit}.`,
-      );
-      if (result.shopErrors?.length) {
-        reportError('Sync completed with shop errors', result.shopErrors.join('\n'));
-        setFormError(result.shopErrors.join('\n'));
-      }
-    } catch (err) {
-      const detail = formatFirebaseError(err);
-      setFormError(detail);
-      reportError('Etsy sync failed', err);
-    } finally {
-      setSyncingId(null);
-    }
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold text-slate-900">Etsy shops</h2>
           <p className="mt-1 max-w-2xl text-sm text-slate-600">
-            Connect one or more Etsy shops. To add another shop on a different Etsy account, click
-            Connect again and approve while logged into that seller account. Same-account shops are
-            all imported in one Connect.
+            After changing the Etsy developer app keystring, reconnect each shop once. Use Sync
+            orders in the header from any page (auto every 30 minutes while the tab is open).
           </p>
           {error ? <p className="mt-2 text-sm text-rose-600">{error}</p> : null}
           {banner ? <p className="mt-2 text-sm text-teal-700">{banner}</p> : null}
+          {syncMessage ? <p className="mt-2 text-sm text-teal-700">{syncMessage}</p> : null}
           {formError ? (
             <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-rose-50 px-2 py-1.5 text-xs text-rose-800">
               {formError}
@@ -132,39 +111,48 @@ export function ShopsPage() {
             <Link2 className="h-4 w-4" />
             {busy
               ? 'Redirecting…'
-              : shops.some((s) => s.connected)
-                ? 'Connect another shop'
+              : needsReconnect.length || shops.some((s) => s.connected)
+                ? 'Reconnect / Connect shop'
                 : 'Connect Etsy'}
           </button>
           <button
             type="button"
-            disabled={!!syncingId || demoMode || !shops.some((s) => s.connected)}
-            onClick={() => void onSync()}
+            disabled={syncing || demoMode || !shops.some((s) => s.connected)}
+            onClick={() => void syncAll()}
             className="inline-flex items-center gap-2 rounded-xl border border-surface-line bg-white px-3 py-2 text-sm font-medium text-slate-800 disabled:opacity-60"
           >
-            <RefreshCw className={`h-4 w-4 ${syncingId === 'all' ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
             Sync all
           </button>
         </div>
       </div>
 
+      {needsReconnect.length ? (
+        <section className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-950">
+          <p className="font-medium">Reconnect required</p>
+          <p className="mt-1">
+            These shops still have tokens from the old Etsy app. Click{' '}
+            <strong>Reconnect / Connect shop</strong> while logged into that seller account:
+          </p>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            {needsReconnect.map((s) => (
+              <li key={s.id}>
+                <span className="font-medium">{s.name}</span>
+                {s.reconnectReason ? (
+                  <span className="block text-xs text-rose-800/80">{s.reconnectReason}</span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       <section className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-        <p className="font-medium">One-time Etsy app Callback URL change</p>
-        <p className="mt-1">
-          Etsy allows only one callback URL per app. For web Connect to work, set your app’s
-          Callback URL to exactly:
-        </p>
+        <p className="font-medium">Etsy app Callback URL</p>
+        <p className="mt-1">Must match exactly:</p>
         <code className="mt-2 block break-all rounded-lg bg-white/80 px-2 py-1.5 text-xs">
           {ETSY_CALLBACK}
         </code>
-        <p className="mt-2 text-amber-900/80">
-          That replaces the extension callback (
-          <span className="break-all">
-            …chromiumapp.org/etsy
-          </span>
-          ) until we migrate the extension to this same Firebase OAuth. Keystring/secret stay the
-          same.
-        </p>
       </section>
 
       <form
@@ -207,7 +195,9 @@ export function ShopsPage() {
                 <p className="mt-2 text-sm text-slate-600">
                   {shop.connected
                     ? `Connected${shop.etsyShopId ? ` · #${shop.etsyShopId}` : ''}`
-                    : 'Not connected'}
+                    : shop.reconnectRequired
+                      ? 'Needs reconnect'
+                      : 'Not connected'}
                 </p>
                 {shop.lastSyncAt ? (
                   <p className="mt-1 text-xs text-slate-400">
@@ -225,16 +215,23 @@ export function ShopsPage() {
                   {shop.connected ? (
                     <button
                       type="button"
-                      disabled={!!syncingId}
-                      onClick={() => void onSync(shop.id)}
+                      disabled={syncing}
+                      onClick={() => void syncShop(shop.id)}
                       className="inline-flex items-center gap-1 text-sm font-medium text-slate-700 hover:underline disabled:opacity-60"
                     >
-                      <RefreshCw
-                        className={`h-3.5 w-3.5 ${syncingId === shop.id ? 'animate-spin' : ''}`}
-                      />
+                      <RefreshCw className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
                       Sync
                     </button>
-                  ) : null}
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={busy || demoMode}
+                      onClick={() => void onConnectEtsy()}
+                      className="text-sm font-medium text-rose-700 hover:underline"
+                    >
+                      Reconnect
+                    </button>
+                  )}
                   {!demoMode && user ? (
                     <button
                       type="button"

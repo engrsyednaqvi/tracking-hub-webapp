@@ -158,6 +158,8 @@ export const etsyOAuthCallback = onRequest(
               name: shop.shopName,
               platform: 'etsy',
               connected: true,
+              reconnectRequired: false,
+              reconnectReason: FieldValue.delete(),
               etsyShopId: String(shop.shopId),
               etsyUserId: shop.userId ?? etsyUserId,
               updatedAt: now,
@@ -171,6 +173,7 @@ export const etsyOAuthCallback = onRequest(
             name: shop.shopName,
             platform: 'etsy',
             connected: true,
+            reconnectRequired: false,
             etsyShopId: String(shop.shopId),
             etsyUserId: shop.userId ?? etsyUserId,
             createdAt: now,
@@ -191,6 +194,8 @@ export const etsyOAuthCallback = onRequest(
             refreshToken: token.refresh_token,
             expiresAt,
             etsyUserId: shop.userId ?? etsyUserId,
+            /** Bound to current Firebase ETSY_KEYSTRING — refresh fails if app keys change. */
+            etsyClientId: keystring,
             updatedAt: now,
           });
 
@@ -212,6 +217,46 @@ export const etsyOAuthCallback = onRequest(
   },
 );
 
+async function markShopNeedsReconnect(
+  uid: string,
+  shopDocId: string,
+  reason: string,
+): Promise<void> {
+  const now = new Date().toISOString();
+  await db().collection('users').doc(uid).collection('shops').doc(shopDocId).set(
+    {
+      connected: false,
+      reconnectRequired: true,
+      reconnectReason: reason.slice(0, 400),
+      updatedAt: now,
+    },
+    { merge: true },
+  );
+  await db()
+    .collection('users')
+    .doc(uid)
+    .collection('etsyCredentials')
+    .doc(shopDocId)
+    .set(
+      {
+        accessToken: '',
+        refreshToken: '',
+        expiresAt: 0,
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+}
+
+function isInvalidEtsyGrant(err: unknown): boolean {
+  const msg = errorMessage(err).toLowerCase();
+  return (
+    msg.includes('invalid_grant') ||
+    msg.includes('client_id is invalid') ||
+    msg.includes('invalid_client')
+  );
+}
+
 async function ensureAccessToken(
   uid: string,
   shopDocId: string,
@@ -232,17 +277,25 @@ async function ensureAccessToken(
     refreshToken: string;
     expiresAt: number;
     etsyShopId: number;
+    etsyClientId?: string;
   };
+
+  // Tokens are bound to the Etsy app (keystring) that issued them.
+  if (cred.etsyClientId && cred.etsyClientId !== keystring) {
+    const reason =
+      'Etsy API app key changed. Reconnect this shop with Connect Etsy so tokens match the new app.';
+    await markShopNeedsReconnect(uid, shopDocId, reason);
+    throw new HttpsError('failed-precondition', reason);
+  }
 
   if (cred.accessToken && cred.expiresAt > Date.now() + 60_000) {
     return { accessToken: cred.accessToken, etsyShopId: Number(cred.etsyShopId) };
   }
 
   if (!cred.refreshToken) {
-    throw new HttpsError(
-      'failed-precondition',
-      'Etsy refresh token missing — reconnect this shop (Connect Etsy).',
-    );
+    const reason = 'Etsy refresh token missing — reconnect this shop (Connect Etsy).';
+    await markShopNeedsReconnect(uid, shopDocId, reason);
+    throw new HttpsError('failed-precondition', reason);
   }
 
   let token: Awaited<ReturnType<typeof refreshAccessToken>>;
@@ -253,10 +306,12 @@ async function ensureAccessToken(
       refreshToken: cred.refreshToken,
     });
   } catch (err) {
-    throw new HttpsError(
-      'failed-precondition',
-      `Etsy token refresh failed — reconnect this shop. ${errorMessage(err)}`,
-    );
+    const detail = errorMessage(err);
+    const reason = isInvalidEtsyGrant(err)
+      ? `Etsy rejected this shop’s tokens (usually after changing the Etsy developer app). Reconnect via Connect Etsy. ${detail}`
+      : `Etsy token refresh failed — reconnect this shop. ${detail}`;
+    await markShopNeedsReconnect(uid, shopDocId, reason);
+    throw new HttpsError('failed-precondition', reason);
   }
 
   const expiresAt = Date.now() + Math.max(60, token.expires_in - 60) * 1000;
@@ -265,6 +320,7 @@ async function ensureAccessToken(
       accessToken: token.access_token,
       refreshToken: token.refresh_token,
       expiresAt,
+      etsyClientId: keystring,
       updatedAt: new Date().toISOString(),
     },
     { merge: true },
@@ -341,15 +397,26 @@ export const etsySync = onCall(
             throw new Error(`Invalid etsyShopId on shop ${shopLabel}`);
           }
 
-          const receipts = await fetchAllPaidReceipts(
-            {
-              keystring,
-              sharedSecret,
-              accessToken,
-              shopId: etsyShopId,
-            },
-            minCreated,
-          );
+          let receipts: Awaited<ReturnType<typeof fetchAllPaidReceipts>>;
+          try {
+            receipts = await fetchAllPaidReceipts(
+              {
+                keystring,
+                sharedSecret,
+                accessToken,
+                shopId: etsyShopId,
+              },
+              minCreated,
+            );
+          } catch (err) {
+            const detail = errorMessage(err);
+            if (/\b(401|403)\b/.test(detail) || /invalid.?token|unauthorized/i.test(detail)) {
+              const reason = `Etsy API rejected this shop’s access token. Reconnect via Connect Etsy. ${detail}`;
+              await markShopNeedsReconnect(uid, shopDoc.id, reason);
+              throw new HttpsError('failed-precondition', reason);
+            }
+            throw err;
+          }
 
           const imageCache = new Map<number, string | null>();
           const uspsCache = new Map<string, Awaited<ReturnType<typeof fetchUspsTrackingStatus>>>();

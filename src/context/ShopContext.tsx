@@ -1,17 +1,24 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
 import { DEMO_ORDERS, DEMO_SHOPS, type Order, type Shop } from '@/types';
 import { useAuth } from '@/context/AuthContext';
+import { useAppErrors } from '@/context/ErrorContext';
+import { formatFirebaseError } from '@/lib/errors';
+import { syncEtsyOrders } from '@/lib/functions';
 import { subscribeOrders } from '@/services/orders';
 import { subscribeShops } from '@/services/shops';
 
 type ShopFilter = 'all' | string;
+
+const AUTO_SYNC_MS = 30 * 60 * 1000;
 
 interface ShopContextValue {
   shops: Shop[];
@@ -22,17 +29,35 @@ interface ShopContextValue {
   filteredOrders: Order[];
   loading: boolean;
   error: string | null;
+  syncing: boolean;
+  syncMessage: string | null;
+  syncAll: () => Promise<void>;
+  syncShop: (shopId: string) => Promise<void>;
 }
 
 const ShopContext = createContext<ShopContextValue | null>(null);
 
+function formatSyncBanner(result: Awaited<ReturnType<typeof syncEtsyOrders>>): string {
+  const uspsBit =
+    typeof result.uspsEnriched === 'number' ? ` · USPS refined ${result.uspsEnriched}` : '';
+  const uspsErr = result.uspsError ? ` · USPS: ${result.uspsError}` : '';
+  const shopErrBit = result.shopErrors?.length
+    ? ` · Shop errors: ${result.shopErrors.length}`
+    : '';
+  return `Synced ${result.shops} shop(s): ${result.created} new, ${result.updated} updated (last ${result.syncDays} days)${uspsBit}${uspsErr}${shopErrBit}.`;
+}
+
 export function ShopProvider({ children }: { children: ReactNode }) {
   const { user, demoMode } = useAuth();
+  const { reportError } = useAppErrors();
   const [shops, setShops] = useState<Shop[]>(demoMode ? DEMO_SHOPS : []);
   const [orders, setOrders] = useState<Order[]>(demoMode ? DEMO_ORDERS : []);
   const [activeShopId, setActiveShopId] = useState<ShopFilter>('all');
   const [loading, setLoading] = useState(!demoMode);
   const [error, setError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const syncingRef = useRef(false);
 
   useEffect(() => {
     if (demoMode) {
@@ -96,11 +121,60 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     }
   }, [shops, activeShopId]);
 
+  const runSync = useCallback(
+    async (shopId?: string, opts?: { silent?: boolean }) => {
+      if (demoMode || !user) return;
+      if (syncingRef.current) return;
+      if (!shops.some((s) => s.connected)) {
+        if (!opts?.silent) {
+          setSyncMessage('No connected Etsy shops to sync. Use Connect Etsy on Shops.');
+        }
+        return;
+      }
+
+      syncingRef.current = true;
+      setSyncing(true);
+      if (!opts?.silent) setSyncMessage(null);
+
+      try {
+        const result = await syncEtsyOrders({ shopId, syncDays: 30 });
+        const banner = formatSyncBanner(result);
+        setSyncMessage(banner);
+        if (result.shopErrors?.length) {
+          reportError('Sync completed with shop errors', result.shopErrors.join('\n'));
+        }
+      } catch (err) {
+        const detail = formatFirebaseError(err);
+        setSyncMessage(detail);
+        if (!opts?.silent) reportError('Etsy sync failed', err);
+        else reportError('Auto-sync failed', err);
+      } finally {
+        syncingRef.current = false;
+        setSyncing(false);
+      }
+    },
+    [demoMode, user, shops, reportError],
+  );
+
+  const syncAll = useCallback(() => runSync(), [runSync]);
+  const syncShop = useCallback((shopId: string) => runSync(shopId), [runSync]);
+
+  // Free client-side auto-sync while the app tab is open (~48 calls/day).
+  useEffect(() => {
+    if (demoMode || !user) return;
+    if (!shops.some((s) => s.connected)) return;
+
+    const id = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      void runSync(undefined, { silent: true });
+    }, AUTO_SYNC_MS);
+
+    return () => window.clearInterval(id);
+  }, [demoMode, user, shops, runSync]);
+
   const value = useMemo<ShopContextValue>(() => {
     const filteredOrders =
-      activeShopId === 'all'
-        ? orders
-        : orders.filter((o) => o.shopId === activeShopId);
+      activeShopId === 'all' ? orders : orders.filter((o) => o.shopId === activeShopId);
 
     return {
       shops,
@@ -111,8 +185,22 @@ export function ShopProvider({ children }: { children: ReactNode }) {
       filteredOrders,
       loading,
       error,
+      syncing,
+      syncMessage,
+      syncAll,
+      syncShop,
     };
-  }, [shops, orders, activeShopId, loading, error]);
+  }, [
+    shops,
+    orders,
+    activeShopId,
+    loading,
+    error,
+    syncing,
+    syncMessage,
+    syncAll,
+    syncShop,
+  ]);
 
   return <ShopContext.Provider value={value}>{children}</ShopContext.Provider>;
 }

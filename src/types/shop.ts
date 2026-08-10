@@ -6,6 +6,9 @@ export interface Shop {
   platform: ShopPlatform;
   /** True once Etsy OAuth tokens are stored (server-side). */
   connected: boolean;
+  /** Set when tokens no longer match the server Etsy app (must Connect again). */
+  reconnectRequired?: boolean;
+  reconnectReason?: string;
   etsyShopId?: string | null;
   etsyUserId?: string | null;
   lastSyncAt?: string | null;
