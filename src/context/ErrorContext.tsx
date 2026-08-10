@@ -8,16 +8,23 @@ import {
 } from 'react';
 import { formatFirebaseError } from '@/lib/errors';
 
-export interface AppErrorEntry {
+export type AppNoticeKind = 'error' | 'info';
+
+export interface AppNotice {
   id: string;
+  kind: AppNoticeKind;
   title: string;
   detail: string;
   at: string;
 }
 
 interface ErrorContextValue {
-  errors: AppErrorEntry[];
+  notices: AppNotice[];
+  /** @deprecated use notices */
+  errors: AppNotice[];
   reportError: (title: string, err: unknown) => void;
+  reportInfo: (title: string, detail: string) => void;
+  dismissNotice: (id: string) => void;
   dismissError: (id: string) => void;
   clearErrors: () => void;
 }
@@ -25,29 +32,51 @@ interface ErrorContextValue {
 const ErrorContext = createContext<ErrorContextValue | null>(null);
 
 export function ErrorProvider({ children }: { children: ReactNode }) {
-  const [errors, setErrors] = useState<AppErrorEntry[]>([]);
+  const [notices, setNotices] = useState<AppNotice[]>([]);
 
-  const reportError = useCallback((title: string, err: unknown) => {
-    const detail = formatFirebaseError(err);
-    const entry: AppErrorEntry = {
+  const push = useCallback((kind: AppNoticeKind, title: string, detail: string) => {
+    const entry: AppNotice = {
       id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      kind,
       title,
       detail,
       at: new Date().toISOString(),
     };
-    console.error(`[${title}]`, err, detail);
-    setErrors((prev) => [entry, ...prev].slice(0, 8));
+    if (kind === 'error') console.error(`[${title}]`, detail);
+    setNotices((prev) => [entry, ...prev].slice(0, 10));
   }, []);
 
-  const dismissError = useCallback((id: string) => {
-    setErrors((prev) => prev.filter((e) => e.id !== id));
+  const reportError = useCallback(
+    (title: string, err: unknown) => {
+      push('error', title, formatFirebaseError(err));
+    },
+    [push],
+  );
+
+  const reportInfo = useCallback(
+    (title: string, detail: string) => {
+      push('info', title, detail);
+    },
+    [push],
+  );
+
+  const dismissNotice = useCallback((id: string) => {
+    setNotices((prev) => prev.filter((e) => e.id !== id));
   }, []);
 
-  const clearErrors = useCallback(() => setErrors([]), []);
+  const clearErrors = useCallback(() => setNotices([]), []);
 
   const value = useMemo(
-    () => ({ errors, reportError, dismissError, clearErrors }),
-    [errors, reportError, dismissError, clearErrors],
+    () => ({
+      notices,
+      errors: notices.filter((n) => n.kind === 'error'),
+      reportError,
+      reportInfo,
+      dismissNotice,
+      dismissError: dismissNotice,
+      clearErrors,
+    }),
+    [notices, reportError, reportInfo, dismissNotice, clearErrors],
   );
 
   return <ErrorContext.Provider value={value}>{children}</ErrorContext.Provider>;

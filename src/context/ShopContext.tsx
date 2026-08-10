@@ -11,7 +11,6 @@ import {
 import { DEMO_ORDERS, DEMO_SHOPS, type Order, type Shop } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { useAppErrors } from '@/context/ErrorContext';
-import { formatFirebaseError } from '@/lib/errors';
 import { syncEtsyOrders } from '@/lib/functions';
 import { subscribeOrders } from '@/services/orders';
 import { subscribeShops } from '@/services/shops';
@@ -30,7 +29,6 @@ interface ShopContextValue {
   loading: boolean;
   error: string | null;
   syncing: boolean;
-  syncMessage: string | null;
   syncAll: () => Promise<void>;
   syncShop: (shopId: string) => Promise<void>;
 }
@@ -49,14 +47,13 @@ function formatSyncBanner(result: Awaited<ReturnType<typeof syncEtsyOrders>>): s
 
 export function ShopProvider({ children }: { children: ReactNode }) {
   const { user, demoMode } = useAuth();
-  const { reportError } = useAppErrors();
+  const { reportError, reportInfo } = useAppErrors();
   const [shops, setShops] = useState<Shop[]>(demoMode ? DEMO_SHOPS : []);
   const [orders, setOrders] = useState<Order[]>(demoMode ? DEMO_ORDERS : []);
   const [activeShopId, setActiveShopId] = useState<ShopFilter>('all');
   const [loading, setLoading] = useState(!demoMode);
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const syncingRef = useRef(false);
 
   useEffect(() => {
@@ -127,33 +124,28 @@ export function ShopProvider({ children }: { children: ReactNode }) {
       if (syncingRef.current) return;
       if (!shops.some((s) => s.connected)) {
         if (!opts?.silent) {
-          setSyncMessage('No connected Etsy shops to sync. Use Connect Etsy on Shops.');
+          reportInfo('Sync skipped', 'No connected Etsy shops. Use Connect Etsy on Shops.');
         }
         return;
       }
 
       syncingRef.current = true;
       setSyncing(true);
-      if (!opts?.silent) setSyncMessage(null);
 
       try {
         const result = await syncEtsyOrders({ shopId, syncDays: 30 });
-        const banner = formatSyncBanner(result);
-        setSyncMessage(banner);
+        reportInfo(opts?.silent ? 'Auto-sync' : 'Sync complete', formatSyncBanner(result));
         if (result.shopErrors?.length) {
-          reportError('Sync completed with shop errors', result.shopErrors.join('\n'));
+          reportError('Sync shop errors', result.shopErrors.join('\n'));
         }
       } catch (err) {
-        const detail = formatFirebaseError(err);
-        setSyncMessage(detail);
-        if (!opts?.silent) reportError('Etsy sync failed', err);
-        else reportError('Auto-sync failed', err);
+        reportError(opts?.silent ? 'Auto-sync failed' : 'Etsy sync failed', err);
       } finally {
         syncingRef.current = false;
         setSyncing(false);
       }
     },
-    [demoMode, user, shops, reportError],
+    [demoMode, user, shops, reportError, reportInfo],
   );
 
   const syncAll = useCallback(() => runSync(), [runSync]);
@@ -186,21 +178,10 @@ export function ShopProvider({ children }: { children: ReactNode }) {
       loading,
       error,
       syncing,
-      syncMessage,
       syncAll,
       syncShop,
     };
-  }, [
-    shops,
-    orders,
-    activeShopId,
-    loading,
-    error,
-    syncing,
-    syncMessage,
-    syncAll,
-    syncShop,
-  ]);
+  }, [shops, orders, activeShopId, loading, error, syncing, syncAll, syncShop]);
 
   return <ShopContext.Provider value={value}>{children}</ShopContext.Provider>;
 }
