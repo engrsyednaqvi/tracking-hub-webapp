@@ -278,32 +278,62 @@ export function OrderDetailPage() {
             )}
           </div>
           <div className="flex flex-col justify-between gap-6 p-6">
-            <div className="space-y-3">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                {shop?.name || 'Shop'} · Order #{order.etsyOrderNumber || '—'}
-              </p>
-              <h1 className="text-2xl font-semibold leading-tight text-slate-900 sm:text-3xl">
-                {lineItems[0]?.title || order.product || 'Order'}
-              </h1>
-              <p className="text-sm text-slate-600">
-                Placed {formatOrderDateTime(order.createdAt)}
-                {order.customerName ? ` · ${order.customerName}` : ''}
-              </p>
-              <div className="flex flex-wrap items-center gap-2">
-                <span
-                  title={statusHelp(order.status)}
-                  className={cn(
-                    'inline-flex rounded-md px-2.5 py-1 text-xs font-medium',
-                    statusTone(order.status),
-                  )}
-                >
-                  {statusLabel(order.status)}
-                </span>
-                {etsy?.status ? (
-                  <span className="rounded-md bg-slate-100 px-2.5 py-1 text-xs text-slate-600">
-                    Etsy: {etsy.status}
-                  </span>
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Customer
+                </p>
+                <h1 className="text-2xl font-semibold leading-tight text-slate-900 sm:text-3xl">
+                  {etsy?.name || order.customerName || 'Customer'}
+                </h1>
+                {etsy?.buyerEmail ? (
+                  <p className="text-sm text-slate-600">
+                    <a
+                      href={`mailto:${etsy.buyerEmail}`}
+                      className="text-brand hover:underline"
+                    >
+                      {etsy.buyerEmail}
+                    </a>
+                  </p>
                 ) : null}
+                {addr.length ? (
+                  <div className="flex gap-2 pt-1 text-sm leading-relaxed text-slate-700">
+                    <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                    <div className="space-y-0.5">
+                      {addr.map((line) => (
+                        <p key={line}>{line}</p>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="space-y-2 border-t border-surface-line pt-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  {shop?.name || 'Shop'} · Order #{order.etsyOrderNumber || '—'}
+                </p>
+                <p className="text-base font-medium leading-snug text-slate-900 sm:text-lg">
+                  {lineItems[0]?.title || order.product || 'Order'}
+                </p>
+                <p className="text-sm text-slate-600">
+                  Placed {formatOrderDateTime(order.createdAt)}
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    title={statusHelp(order.status)}
+                    className={cn(
+                      'inline-flex rounded-md px-2.5 py-1 text-xs font-medium',
+                      statusTone(order.status),
+                    )}
+                  >
+                    {statusLabel(order.status)}
+                  </span>
+                  {etsy?.status ? (
+                    <span className="rounded-md bg-slate-100 px-2.5 py-1 text-xs text-slate-600">
+                      Etsy: {etsy.status}
+                    </span>
+                  ) : null}
+                </div>
               </div>
             </div>
             <dl className="grid gap-2 sm:grid-cols-2">
@@ -339,19 +369,10 @@ export function OrderDetailPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Section title="Customer & shipping" icon={<MapPin className="h-4 w-4" />}>
+        <Section title="Customer extras" icon={<MapPin className="h-4 w-4" />}>
           <dl className="grid gap-2 text-sm">
-            <Detail label="Name" value={etsy?.name || order.customerName || '—'} />
-            <Detail label="Buyer email" value={etsy?.buyerEmail || '—'} />
             <Detail label="Buyer user ID" value={etsy?.buyerUserId || '—'} />
-            <div className="rounded-xl border border-surface-line/80 px-3 py-2">
-              <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
-                Address
-              </dt>
-              <dd className="mt-1 space-y-0.5 font-medium text-slate-900">
-                {addr.length ? addr.map((line) => <p key={line}>{line}</p>) : <p>—</p>}
-              </dd>
-            </div>
+            <Detail label="Country" value={etsy?.countryIso || '—'} />
           </dl>
         </Section>
 
