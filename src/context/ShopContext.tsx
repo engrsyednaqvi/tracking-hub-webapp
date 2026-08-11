@@ -30,8 +30,30 @@ interface ShopContextValue {
   error: string | null;
   syncing: boolean;
   syncMessage: string | null;
+  /** Most relevant shop lastSyncAt for the current filter (active shop, or latest across connected). */
+  lastSyncedAt: string | null;
   syncAll: () => Promise<void>;
   syncShop: (shopId: string) => Promise<void>;
+}
+
+function resolveLastSyncedAt(shops: Shop[], activeShopId: ShopFilter): string | null {
+  if (activeShopId !== 'all') {
+    const shop = shops.find((s) => s.id === activeShopId);
+    return shop?.lastSyncAt ?? null;
+  }
+
+  const candidates = shops.filter((s) => s.connected && !s.reconnectRequired);
+  const pool = candidates.length ? candidates : shops;
+  let latest: string | null = null;
+  let latestMs = -1;
+  for (const shop of pool) {
+    if (!shop.lastSyncAt) continue;
+    const ms = new Date(shop.lastSyncAt).getTime();
+    if (Number.isNaN(ms) || ms <= latestMs) continue;
+    latestMs = ms;
+    latest = shop.lastSyncAt;
+  }
+  return latest;
 }
 
 const ShopContext = createContext<ShopContextValue | null>(null);
@@ -187,6 +209,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
       error,
       syncing,
       syncMessage,
+      lastSyncedAt: resolveLastSyncedAt(shops, activeShopId),
       syncAll,
       syncShop,
     };
