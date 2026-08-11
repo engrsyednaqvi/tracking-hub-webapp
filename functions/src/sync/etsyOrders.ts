@@ -103,7 +103,7 @@ export async function syncShopDocuments(options: SyncOptions): Promise<SyncResul
         throw err;
       }
 
-      const imageCache = new Map<number, string | null>();
+      const imageCache = new Map<string, string | null>();
       const uspsCache = new Map<string, Awaited<ReturnType<typeof fetchUspsTrackingStatus>>>();
 
       for (const receipt of receipts) {
@@ -143,19 +143,26 @@ export async function syncShopDocuments(options: SyncOptions): Promise<SyncResul
           }
         }
 
-        let imageUrl: string | null = null;
-        if (fields.listingId) {
-          if (!imageCache.has(fields.listingId)) {
+        // Large images per line item (and hero image from first item).
+        const etsy = { ...fields.etsy, lineItems: [...fields.etsy.lineItems] };
+        for (let i = 0; i < etsy.lineItems.length; i++) {
+          const item = etsy.lineItems[i]!;
+          if (!item.listingId) continue;
+          const cacheKey = `${item.listingId}:${item.listingImageId ?? 0}`;
+          if (!imageCache.has(cacheKey)) {
             imageCache.set(
-              fields.listingId,
+              cacheKey,
               await fetchListingImageUrl(
                 { keystring, sharedSecret, accessToken },
-                fields.listingId,
+                item.listingId,
+                item.listingImageId,
               ),
             );
           }
-          imageUrl = imageCache.get(fields.listingId) ?? null;
+          const url = imageCache.get(cacheKey) ?? '';
+          etsy.lineItems[i] = { ...item, imageUrl: url || '' };
         }
+        const imageUrl = etsy.lineItems.find((li) => li.imageUrl)?.imageUrl || '';
 
         const existing = await ordersCol
           .where('etsyReceiptId', '==', fields.etsyReceiptId)
@@ -163,22 +170,30 @@ export async function syncShopDocuments(options: SyncOptions): Promise<SyncResul
           .get();
 
         const now = new Date().toISOString();
+        const shared = {
+          etsyOrderNumber: fields.etsyOrderNumber,
+          customerName: fields.customerName,
+          product: fields.product,
+          imageUrl,
+          status,
+          etsyStatusRaw,
+          trackingNumber: fields.trackingNumber,
+          carrier: fields.carrier,
+          etsy,
+          ...(fields.dispatchedAt ? { dispatchedAt: fields.dispatchedAt } : {}),
+          ...(fields.shipByAt ? { shipByAt: fields.shipByAt } : {}),
+          updatedAt: now,
+        };
+
         if (!existing.empty) {
           const docId = existing.docs[0]!.id;
           const prev = existing.docs[0]!;
           await ordersCol.doc(docId).set(
             {
-              etsyOrderNumber: fields.etsyOrderNumber,
-              customerName: fields.customerName,
-              product: fields.product,
-              status,
-              etsyStatusRaw,
-              trackingNumber: fields.trackingNumber || prev.get('trackingNumber') || '',
-              carrier: fields.carrier || prev.get('carrier') || '',
-              ...(fields.dispatchedAt ? { dispatchedAt: fields.dispatchedAt } : {}),
-              ...(fields.shipByAt ? { shipByAt: fields.shipByAt } : {}),
-              ...(imageUrl && !prev.get('imageUrl') ? { imageUrl } : {}),
-              updatedAt: now,
+              ...shared,
+              trackingNumber:
+                fields.trackingNumber || String(prev.get('trackingNumber') || ''),
+              carrier: fields.carrier || String(prev.get('carrier') || ''),
             },
             { merge: true },
           );
@@ -188,21 +203,11 @@ export async function syncShopDocuments(options: SyncOptions): Promise<SyncResul
           await ordersCol.doc(id).set({
             id,
             shopId: shopDoc.id,
-            etsyOrderNumber: fields.etsyOrderNumber,
             etsyReceiptId: fields.etsyReceiptId,
-            customerName: fields.customerName,
-            product: fields.product,
-            imageUrl: imageUrl ?? '',
-            status,
-            etsyStatusRaw,
             supplierName: '',
             supplierOrderNumber: '',
-            trackingNumber: fields.trackingNumber,
-            carrier: fields.carrier,
-            ...(fields.dispatchedAt ? { dispatchedAt: fields.dispatchedAt } : {}),
-            ...(fields.shipByAt ? { shipByAt: fields.shipByAt } : {}),
             createdAt: fields.createdAt,
-            updatedAt: now,
+            ...shared,
           });
           created += 1;
         }

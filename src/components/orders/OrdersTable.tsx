@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   ArrowDown,
   ArrowUp,
@@ -220,9 +221,9 @@ function OrderRow({
   const help = statusHelp(order.status);
 
   return (
-    <tr className="border-b border-surface-line/70 last:border-0">
+    <tr className="border-b border-surface-line/70 last:border-0 hover:bg-slate-50/80">
       <td className="px-3 py-2.5">
-        <div className="flex items-center gap-3">
+        <Link to={`/orders/${order.id}`} className="flex items-center gap-3">
           {order.imageUrl ? (
             <img
               src={order.imageUrl}
@@ -237,15 +238,17 @@ function OrderRow({
             </span>
           )}
           <div className="min-w-0">
-            <p className="line-clamp-2 font-medium text-slate-900">
+            <p className="line-clamp-2 font-medium text-slate-900 hover:text-brand">
               {order.product || 'Listing'}
             </p>
             <p className="text-xs text-slate-400">{shopLabel}</p>
           </div>
-        </div>
+        </Link>
       </td>
       <td className="px-3 py-2.5 font-medium text-slate-900">
-        {order.etsyOrderNumber || '—'}
+        <Link to={`/orders/${order.id}`} className="hover:text-brand hover:underline">
+          {order.etsyOrderNumber || '—'}
+        </Link>
       </td>
       <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">
         {formatOrderDate(order.createdAt)}

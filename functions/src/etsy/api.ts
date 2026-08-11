@@ -250,16 +250,219 @@ export interface EtsyReceipt {
   was_canceled?: boolean | number | string;
   /** Set while fetching via Etsy was_shipped / was_delivered filters. */
   _shippingBucket?: EtsyShippingStatus;
-  transactions?: Array<{
-    title?: string;
-    quantity?: number;
-    listing_id?: number | string;
-    listing_image_id?: number | string;
-    shipped_timestamp?: number;
-    expected_ship_date?: number;
-  }>;
+  transactions?: Array<Record<string, unknown>>;
   shipments?: Array<Record<string, unknown>>;
+  refunds?: Array<Record<string, unknown>>;
   [key: string]: unknown;
+}
+
+export type MappedMoney = {
+  amount: number;
+  divisor: number;
+  currencyCode: string;
+  formatted: string;
+};
+
+export type MappedVariation = {
+  propertyId: number | null;
+  valueId: number | null;
+  formattedName: string;
+  formattedValue: string;
+};
+
+export type MappedLineItem = {
+  transactionId: string;
+  title: string;
+  description: string;
+  quantity: number;
+  listingId: number | null;
+  productId: number | null;
+  sku: string;
+  isDigital: boolean;
+  fileData: string;
+  price: MappedMoney | null;
+  shippingCost: MappedMoney | null;
+  variations: MappedVariation[];
+  productData: MappedVariation[];
+  shippedAt: string | null;
+  paidAt: string | null;
+  createdAt: string | null;
+  expectedShipDate: string | null;
+  shippingMethod: string;
+  shippingUpgrade: string;
+  shippingProfileId: string;
+  minProcessingDays: number | null;
+  maxProcessingDays: number | null;
+  buyerCoupon: number | null;
+  shopCoupon: number | null;
+  listingImageId: number | null;
+  imageUrl: string;
+};
+
+export type MappedShipment = {
+  receiptShippingId: string;
+  trackingCode: string;
+  carrierName: string;
+  notificationAt: string | null;
+  mailingDate: string | null;
+};
+
+/** Rich Etsy receipt snapshot stored on each order for the detail page. */
+export type MappedEtsyDetails = {
+  receiptId: string;
+  receiptType: string;
+  status: string;
+  isPaid: boolean;
+  isShipped: boolean;
+  isDelivered: boolean;
+  isCanceled: boolean;
+  isGift: boolean;
+  giftMessage: string;
+  giftSender: string;
+  sellerUserId: string;
+  sellerEmail: string;
+  buyerUserId: string;
+  buyerEmail: string;
+  paymentMethod: string;
+  paymentEmail: string;
+  messageFromBuyer: string;
+  messageFromSeller: string;
+  messageFromPayment: string;
+  name: string;
+  firstLine: string;
+  secondLine: string;
+  city: string;
+  state: string;
+  zip: string;
+  countryIso: string;
+  formattedAddress: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  subtotal: MappedMoney | null;
+  totalPrice: MappedMoney | null;
+  totalShippingCost: MappedMoney | null;
+  totalTaxCost: MappedMoney | null;
+  totalVatCost: MappedMoney | null;
+  discountAmt: MappedMoney | null;
+  giftWrapPrice: MappedMoney | null;
+  grandtotal: MappedMoney | null;
+  lineItems: MappedLineItem[];
+  shipments: MappedShipment[];
+  refunds: Array<Record<string, unknown>>;
+  /** Full receipt JSON from Open API (minus internal fields). */
+  raw: Record<string, unknown>;
+};
+
+function unixToIso(value: unknown): string | null {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  // Etsy uses seconds; tolerate ms if ever returned.
+  const ms = n > 1e12 ? n : n * 1000;
+  return new Date(ms).toISOString();
+}
+
+function asString(value: unknown): string {
+  if (value == null) return '';
+  return String(value).trim();
+}
+
+function asNumber(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function mapMoney(value: unknown): MappedMoney | null {
+  if (!value || typeof value !== 'object') return null;
+  const m = value as Record<string, unknown>;
+  const amount = Number(m.amount);
+  const divisor = Number(m.divisor || 100);
+  const currencyCode = asString(m.currency_code || m.currencyCode) || 'USD';
+  if (!Number.isFinite(amount) || !Number.isFinite(divisor) || divisor <= 0) return null;
+  const major = amount / divisor;
+  const formatted = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: currencyCode.length === 3 ? currencyCode : 'USD',
+  }).format(major);
+  return { amount, divisor, currencyCode, formatted };
+}
+
+function mapVariations(value: unknown): MappedVariation[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((row) => {
+      const v = (row ?? {}) as Record<string, unknown>;
+      const formattedName = asString(
+        v.formatted_name ?? v.formattedName ?? v.property_name ?? v.propertyName,
+      );
+      const formattedValue = asString(
+        v.formatted_value ?? v.formattedValue ?? v.value ?? v.value_string,
+      );
+      if (!formattedName && !formattedValue) return null;
+      return {
+        propertyId: asNumber(v.property_id ?? v.propertyId),
+        valueId: asNumber(v.value_id ?? v.valueId),
+        formattedName: formattedName || 'Option',
+        formattedValue: formattedValue || '—',
+      };
+    })
+    .filter((x): x is MappedVariation => Boolean(x));
+}
+
+function mapLineItem(tx: Record<string, unknown>): MappedLineItem {
+  const listingId = asNumber(tx.listing_id ?? tx.listingId);
+  const listingImageId = asNumber(tx.listing_image_id ?? tx.listingImageId);
+  return {
+    transactionId: asString(tx.transaction_id ?? tx.transactionId),
+    title: asString(tx.title),
+    description: asString(tx.description),
+    quantity: asNumber(tx.quantity) ?? 1,
+    listingId,
+    productId: asNumber(tx.product_id ?? tx.productId),
+    sku: asString(tx.sku),
+    isDigital: truthyFlag(tx.is_digital ?? tx.isDigital),
+    fileData: asString(tx.file_data ?? tx.fileData),
+    price: mapMoney(tx.price),
+    shippingCost: mapMoney(tx.shipping_cost ?? tx.shippingCost),
+    variations: mapVariations(tx.variations),
+    productData: mapVariations(tx.product_data ?? tx.productData),
+    shippedAt: unixToIso(tx.shipped_timestamp ?? tx.shippedTimestamp),
+    paidAt: unixToIso(tx.paid_timestamp ?? tx.paidTimestamp),
+    createdAt: unixToIso(
+      tx.created_timestamp ?? tx.create_timestamp ?? tx.createdTimestamp ?? tx.createTimestamp,
+    ),
+    expectedShipDate: unixToIso(tx.expected_ship_date ?? tx.expectedShipDate),
+    shippingMethod: asString(tx.shipping_method ?? tx.shippingMethod),
+    shippingUpgrade: asString(tx.shipping_upgrade ?? tx.shippingUpgrade),
+    shippingProfileId: asString(tx.shipping_profile_id ?? tx.shippingProfileId),
+    minProcessingDays: asNumber(tx.min_processing_days ?? tx.minProcessingDays),
+    maxProcessingDays: asNumber(tx.max_processing_days ?? tx.maxProcessingDays),
+    buyerCoupon: asNumber(tx.buyer_coupon ?? tx.buyerCoupon),
+    shopCoupon: asNumber(tx.shop_coupon ?? tx.shopCoupon),
+    listingImageId,
+    imageUrl: '',
+  };
+}
+
+function mapShipment(row: Record<string, unknown>): MappedShipment {
+  return {
+    receiptShippingId: asString(row.receipt_shipping_id ?? row.receiptShippingId),
+    trackingCode: asString(row.tracking_code ?? row.trackingCode),
+    carrierName: asString(row.carrier_name ?? row.carrierName),
+    notificationAt: unixToIso(
+      row.shipment_notification_timestamp ?? row.shipmentNotificationTimestamp,
+    ),
+    mailingDate: unixToIso(row.mailing_date ?? row.mailingDate),
+  };
+}
+
+function cleanRawReceipt(receipt: EtsyReceipt): Record<string, unknown> {
+  const { _shippingBucket: _ignored, ...rest } = receipt;
+  try {
+    return JSON.parse(JSON.stringify(rest)) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
 }
 
 function truthyFlag(value: unknown): boolean {
@@ -477,7 +680,7 @@ export async function fetchAllPaidReceipts(
 export function receiptDispatchedAt(receipt: EtsyReceipt): string | null {
   const candidates: number[] = [];
   for (const t of receipt.transactions ?? []) {
-    const ts = Number(t.shipped_timestamp ?? 0);
+    const ts = Number(t.shipped_timestamp ?? t.shippedTimestamp ?? 0);
     if (Number.isFinite(ts) && ts > 0) candidates.push(ts);
   }
   for (const shipment of receipt.shipments ?? []) {
@@ -498,7 +701,7 @@ export function receiptDispatchedAt(receipt: EtsyReceipt): string | null {
 export function receiptShipByAt(receipt: EtsyReceipt): string | null {
   const candidates: number[] = [];
   for (const t of receipt.transactions ?? []) {
-    const ts = Number(t.expected_ship_date ?? 0);
+    const ts = Number(t.expected_ship_date ?? t.expectedShipDate ?? 0);
     if (Number.isFinite(ts) && ts > 0) candidates.push(ts);
   }
   if (!candidates.length) return null;
@@ -518,30 +721,78 @@ export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
   dispatchedAt: string | null;
   shipByAt: string | null;
   listingId: number | null;
+  etsy: MappedEtsyDetails;
 } {
-  const id = String(receipt.receipt_id ?? '').trim();
-  const titles = (receipt.transactions ?? [])
+  const id = asString(receipt.receipt_id);
+  const lineItems = (receipt.transactions ?? []).map((t) =>
+    mapLineItem((t ?? {}) as Record<string, unknown>),
+  );
+  const titles = lineItems
     .map((t) => {
-      const title = String(t.title ?? '').trim();
-      const qty = t.quantity && t.quantity > 1 ? ` ×${t.quantity}` : '';
-      return title ? `${title}${qty}` : '';
+      const qty = t.quantity > 1 ? ` ×${t.quantity}` : '';
+      return t.title ? `${t.title}${qty}` : '';
     })
     .filter(Boolean);
 
   const mapped = shippingStatusFromReceipt(receipt);
-
-  const unix = receipt.created_timestamp ?? receipt.create_timestamp;
   const createdAt =
-    unix && unix > 0 ? new Date(unix * 1000).toISOString() : new Date().toISOString();
+    unixToIso(receipt.created_timestamp ?? receipt.create_timestamp) ||
+    new Date().toISOString();
 
-  const listingRaw = receipt.transactions?.[0]?.listing_id;
-  const listingId =
-    listingRaw != null && Number.isFinite(Number(listingRaw)) ? Number(listingRaw) : null;
+  const listingId = lineItems[0]?.listingId ?? null;
+
+  const etsy: MappedEtsyDetails = {
+    receiptId: id,
+    receiptType: asString(receipt.receipt_type ?? receipt.receiptType),
+    status: asString(receipt.status),
+    isPaid: truthyFlag(receipt.is_paid ?? receipt.was_paid ?? receipt.isPaid),
+    isShipped: truthyFlag(receipt.is_shipped ?? receipt.was_shipped),
+    isDelivered: truthyFlag(receipt.is_delivered ?? receipt.was_delivered),
+    isCanceled: truthyFlag(receipt.is_canceled ?? receipt.was_canceled),
+    isGift: truthyFlag(receipt.is_gift ?? receipt.isGift),
+    giftMessage: asString(receipt.gift_message ?? receipt.giftMessage),
+    giftSender: asString(receipt.gift_sender ?? receipt.giftSender),
+    sellerUserId: asString(receipt.seller_user_id ?? receipt.sellerUserId),
+    sellerEmail: asString(receipt.seller_email ?? receipt.sellerEmail),
+    buyerUserId: asString(receipt.buyer_user_id ?? receipt.buyerUserId),
+    buyerEmail: asString(receipt.buyer_email ?? receipt.buyerEmail),
+    paymentMethod: asString(receipt.payment_method ?? receipt.paymentMethod),
+    paymentEmail: asString(receipt.payment_email ?? receipt.paymentEmail),
+    messageFromBuyer: asString(receipt.message_from_buyer ?? receipt.messageFromBuyer),
+    messageFromSeller: asString(receipt.message_from_seller ?? receipt.messageFromSeller),
+    messageFromPayment: asString(receipt.message_from_payment ?? receipt.messageFromPayment),
+    name: asString(receipt.name),
+    firstLine: asString(receipt.first_line ?? receipt.firstLine),
+    secondLine: asString(receipt.second_line ?? receipt.secondLine),
+    city: asString(receipt.city),
+    state: asString(receipt.state),
+    zip: asString(receipt.zip),
+    countryIso: asString(receipt.country_iso ?? receipt.countryIso),
+    formattedAddress: asString(receipt.formatted_address ?? receipt.formattedAddress),
+    createdAt: unixToIso(receipt.created_timestamp ?? receipt.create_timestamp),
+    updatedAt: unixToIso(receipt.updated_timestamp ?? receipt.update_timestamp),
+    subtotal: mapMoney(receipt.subtotal),
+    totalPrice: mapMoney(receipt.total_price ?? receipt.totalPrice),
+    totalShippingCost: mapMoney(receipt.total_shipping_cost ?? receipt.totalShippingCost),
+    totalTaxCost: mapMoney(receipt.total_tax_cost ?? receipt.totalTaxCost),
+    totalVatCost: mapMoney(receipt.total_vat_cost ?? receipt.totalVatCost),
+    discountAmt: mapMoney(receipt.discount_amt ?? receipt.discountAmt),
+    giftWrapPrice: mapMoney(receipt.gift_wrap_price ?? receipt.giftWrapPrice),
+    grandtotal: mapMoney(receipt.grandtotal ?? receipt.grand_total),
+    lineItems,
+    shipments: (receipt.shipments ?? []).map((s) =>
+      mapShipment((s ?? {}) as Record<string, unknown>),
+    ),
+    refunds: Array.isArray(receipt.refunds)
+      ? (JSON.parse(JSON.stringify(receipt.refunds)) as Array<Record<string, unknown>>)
+      : [],
+    raw: cleanRawReceipt(receipt),
+  };
 
   return {
     etsyOrderNumber: id,
     etsyReceiptId: id,
-    customerName: String(receipt.name ?? '').trim(),
+    customerName: asString(receipt.name),
     product: titles.join('; '),
     trackingNumber: mapped.trackingNumber,
     carrier: mapped.carrier,
@@ -551,20 +802,48 @@ export function mapReceiptToOrderFields(receipt: EtsyReceipt): {
     dispatchedAt: receiptDispatchedAt(receipt),
     shipByAt: receiptShipByAt(receipt),
     listingId,
+    etsy,
   };
 }
 
-/** Fetch first listing thumbnail (cached per sync via caller). */
+/** Prefer large listing images for the order detail page. */
 export async function fetchListingImageUrl(
   creds: { keystring: string; sharedSecret: string; accessToken: string },
   listingId: number,
+  listingImageId?: number | null,
 ): Promise<string | null> {
+  const pickUrl = (img?: {
+    url_fullxfull?: string;
+    url_570xN?: string;
+    url_170x135?: string;
+    url_75x75?: string;
+  }) => img?.url_fullxfull || img?.url_570xN || img?.url_170x135 || img?.url_75x75 || null;
+
+  try {
+    if (listingImageId && Number.isFinite(listingImageId)) {
+      const one = await etsyFetch<{
+        url_fullxfull?: string;
+        url_570xN?: string;
+        url_170x135?: string;
+        url_75x75?: string;
+      }>(creds, `/listings/${listingId}/images/${listingImageId}`);
+      const url = pickUrl(one);
+      if (url) return url;
+    }
+  } catch {
+    // fall through to listing images list
+  }
+
   try {
     const data = await etsyFetch<{
-      results?: Array<{ url_170x135?: string; url_75x75?: string; url_570xN?: string }>;
+      results?: Array<{
+        url_fullxfull?: string;
+        url_570xN?: string;
+        url_170x135?: string;
+        url_75x75?: string;
+      }>;
     }>(creds, `/listings/${listingId}/images`);
-    const img = data.results?.[0];
-    return img?.url_170x135 || img?.url_75x75 || img?.url_570xN || null;
+    return pickUrl(data.results?.[0]);
   } catch {
     return null;
   }
