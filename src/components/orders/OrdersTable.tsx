@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowDown,
@@ -61,7 +61,6 @@ export function OrdersTable({
       if (sortKey === 'dispatched') {
         const ta = dispatchColumnTime(a);
         const tb = dispatchColumnTime(b);
-        // Empty dates sort last in both directions.
         if (!ta && !tb) return 0;
         if (!ta) return 1;
         if (!tb) return -1;
@@ -73,7 +72,7 @@ export function OrdersTable({
       if (sa !== sb) return (sa - sb) * dir;
       const ta = new Date(a.createdAt).getTime() || 0;
       const tb = new Date(b.createdAt).getTime() || 0;
-      return tb - ta; // newest first as tie-breaker when sorting by status
+      return tb - ta;
     });
   }, [filteredOrders, statusFilter, sortKey, sortDir]);
 
@@ -91,6 +90,7 @@ export function OrdersTable({
   }
 
   const shopName = (id: string) => shops.find((s) => s.id === id)?.name ?? 'Shop';
+  const canDelete = !demoMode && !!user;
 
   return (
     <div className="space-y-3">
@@ -127,56 +127,86 @@ export function OrdersTable({
           </p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-2xl border border-surface-line bg-white shadow-sm">
-          <table className="min-w-full text-left text-sm">
-            <thead className="border-b border-surface-line bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-3 py-2.5 font-medium">Item</th>
-                <th className="px-3 py-2.5 font-medium">Order</th>
-                <th className="px-3 py-2.5 font-medium">
-                  <SortButton
-                    label="Date"
-                    active={sortKey === 'date'}
-                    dir={sortDir}
-                    onClick={() => toggleSort('date')}
+        <>
+          {/* Mobile / tablet: stacked cards so every field stays readable */}
+          <div className="space-y-3 xl:hidden">
+            {visible.map((order) => (
+              <OrderCard
+                key={order.id}
+                order={order}
+                shopLabel={shopName(order.shopId)}
+                canDelete={canDelete}
+                onDelete={() => user && void deleteOrder(user.uid, order.id)}
+              />
+            ))}
+          </div>
+
+          {/* Desktop: wide table with column floors + horizontal scroll if needed */}
+          <div className="hidden overflow-x-auto rounded-2xl border border-surface-line bg-white shadow-sm xl:block">
+            <table className="w-full min-w-[78rem] table-fixed text-left text-sm">
+              <colgroup>
+                <col className="w-[16%]" />
+                <col className="w-[7%]" />
+                <col className="w-[7%]" />
+                <col className="w-[9%]" />
+                <col className="w-[8%]" />
+                <col className="w-[8%]" />
+                <col className="w-[10%]" />
+                <col className="w-[10%]" />
+                <col className="w-[12%]" />
+                <col className="w-[8%]" />
+                <col className="w-[3%]" />
+              </colgroup>
+              <thead className="border-b border-surface-line bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-3 py-2.5 font-medium">Item</th>
+                  <th className="px-3 py-2.5 font-medium">Order</th>
+                  <th className="px-3 py-2.5 font-medium">
+                    <SortButton
+                      label="Date"
+                      active={sortKey === 'date'}
+                      dir={sortDir}
+                      onClick={() => toggleSort('date')}
+                    />
+                  </th>
+                  <th className="px-3 py-2.5 font-medium">Customer</th>
+                  <th className="px-3 py-2.5 font-medium">
+                    <SortButton
+                      label="Etsy"
+                      active={sortKey === 'status'}
+                      dir={sortDir}
+                      onClick={() => toggleSort('status')}
+                    />
+                  </th>
+                  <th className="px-3 py-2.5 font-medium">USPS</th>
+                  <th className="px-3 py-2.5 font-medium">Tracking</th>
+                  <th className="px-3 py-2.5 font-medium">Supplier</th>
+                  <th className="px-3 py-2.5 font-medium">Supplier track</th>
+                  <th className="px-3 py-2.5 font-medium">
+                    <SortButton
+                      label="Ship by"
+                      active={sortKey === 'dispatched'}
+                      dir={sortDir}
+                      onClick={() => toggleSort('dispatched')}
+                    />
+                  </th>
+                  <th className="px-2 py-2.5 font-medium" />
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((order) => (
+                  <OrderRow
+                    key={order.id}
+                    order={order}
+                    shopLabel={shopName(order.shopId)}
+                    canDelete={canDelete}
+                    onDelete={() => user && void deleteOrder(user.uid, order.id)}
                   />
-                </th>
-                <th className="px-3 py-2.5 font-medium">Customer</th>
-                <th className="px-3 py-2.5 font-medium">
-                  <SortButton
-                    label="Status"
-                    active={sortKey === 'status'}
-                    dir={sortDir}
-                    onClick={() => toggleSort('status')}
-                  />
-                </th>
-                <th className="px-3 py-2.5 font-medium">Tracking</th>
-                <th className="px-3 py-2.5 font-medium">Supplier</th>
-                <th className="px-3 py-2.5 font-medium">Supplier tracking</th>
-                <th className="px-3 py-2.5 font-medium">
-                  <SortButton
-                    label="Ship by"
-                    active={sortKey === 'dispatched'}
-                    dir={sortDir}
-                    onClick={() => toggleSort('dispatched')}
-                  />
-                </th>
-                <th className="px-3 py-2.5 font-medium" />
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((order) => (
-                <OrderRow
-                  key={order.id}
-                  order={order}
-                  shopLabel={shopName(order.shopId)}
-                  canDelete={!demoMode && !!user}
-                  onDelete={() => user && void deleteOrder(user.uid, order.id)}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );
@@ -209,6 +239,87 @@ function SortButton({
   );
 }
 
+function StatusBadge({
+  status,
+  title,
+}: {
+  status: Order['status'] | NonNullable<Order['uspsStatus']>;
+  title?: string;
+}) {
+  return (
+    <span
+      title={title || statusHelp(status)}
+      className={cn(
+        'inline-flex max-w-full truncate rounded-md px-2 py-0.5 text-xs font-medium',
+        statusTone(status),
+      )}
+    >
+      {statusLabel(status)}
+    </span>
+  );
+}
+
+function UspsCell({ order }: { order: Order }) {
+  if (order.uspsStatus) {
+    return (
+      <StatusBadge
+        status={order.uspsStatus}
+        title={order.uspsSummary || order.uspsStatusRaw || statusHelp(order.uspsStatus)}
+      />
+    );
+  }
+  if (order.uspsSummary) {
+    return (
+      <span className="block truncate text-xs text-slate-500" title={order.uspsStatusRaw}>
+        {order.uspsSummary}
+      </span>
+    );
+  }
+  return <span className="text-slate-400">—</span>;
+}
+
+function TrackingCell({ order }: { order: Order }) {
+  const trackUrl = buildTrackingUrl(order.trackingNumber, order.carrier);
+  return (
+    <div className="min-w-0">
+      {trackUrl ? (
+        <a
+          href={trackUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex max-w-full items-center gap-1 font-medium text-brand hover:underline"
+          title={order.trackingNumber}
+        >
+          <span className="truncate">{order.trackingNumber || 'Track'}</span>
+          <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+        </a>
+      ) : (
+        <span className="text-slate-400">—</span>
+      )}
+      {order.carrier ? (
+        <p className="truncate text-xs text-slate-400" title={order.carrier}>
+          {order.carrier}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function ShipByCell({ order }: { order: Order }) {
+  if (order.dispatchedAt) {
+    return <span title="Dispatched">{formatOrderDate(order.dispatchedAt)}</span>;
+  }
+  if (order.shipByAt) {
+    return (
+      <span title="Ship by (not yet dispatched)">
+        <span className="block">{formatOrderDate(order.shipByAt)}</span>
+        <span className="text-xs text-slate-400">Ship by</span>
+      </span>
+    );
+  }
+  return <span className="text-slate-400">—</span>;
+}
+
 function OrderRow({
   order,
   shopLabel,
@@ -220,89 +331,67 @@ function OrderRow({
   canDelete: boolean;
   onDelete: () => void;
 }) {
-  const trackUrl = buildTrackingUrl(order.trackingNumber, order.carrier);
-  const help = statusHelp(order.status);
-
   return (
     <tr className="border-b border-surface-line/70 last:border-0 hover:bg-slate-50/80">
-      <td className="px-3 py-2.5">
-        <Link to={`/orders/${order.id}`} className="flex items-center gap-3">
+      <td className="px-3 py-2.5 align-top">
+        <Link to={`/orders/${order.id}`} className="flex min-w-0 items-start gap-2.5">
           {order.imageUrl ? (
             <img
               src={order.imageUrl}
               alt=""
-              className="h-12 w-12 shrink-0 rounded-lg object-cover ring-1 ring-surface-line"
+              className="h-11 w-11 shrink-0 rounded-lg object-cover ring-1 ring-surface-line"
               loading="lazy"
               referrerPolicy="no-referrer"
             />
           ) : (
-            <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
+            <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
               <Package className="h-5 w-5" />
             </span>
           )}
           <div className="min-w-0">
-            <p className="line-clamp-2 font-medium text-slate-900 hover:text-brand">
+            <p className="line-clamp-2 font-medium leading-snug text-slate-900 hover:text-brand">
               {order.product || 'Listing'}
             </p>
-            <p className="text-xs text-slate-400">{shopLabel}</p>
+            <p className="truncate text-xs text-slate-400">{shopLabel}</p>
           </div>
         </Link>
       </td>
-      <td className="px-3 py-2.5 font-medium text-slate-900">
-        <Link to={`/orders/${order.id}`} className="hover:text-brand hover:underline">
+      <td className="px-3 py-2.5 align-top font-medium text-slate-900">
+        <Link
+          to={`/orders/${order.id}`}
+          className="block truncate hover:text-brand hover:underline"
+          title={order.etsyOrderNumber}
+        >
           {order.etsyOrderNumber || '—'}
         </Link>
       </td>
-      <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">
+      <td className="px-3 py-2.5 align-top whitespace-nowrap text-slate-600">
         {formatOrderDate(order.createdAt)}
       </td>
-      <td className="px-3 py-2.5 text-slate-600">{order.customerName || '—'}</td>
-      <td className="px-3 py-2.5">
-        <span
-          title={help}
-          className={cn(
-            'inline-flex rounded-md px-2 py-0.5 text-xs font-medium',
-            statusTone(order.status),
-          )}
-        >
-          {statusLabel(order.status)}
+      <td className="px-3 py-2.5 align-top text-slate-600">
+        <span className="line-clamp-2" title={order.customerName}>
+          {order.customerName || '—'}
         </span>
       </td>
-      <td className="px-3 py-2.5 text-slate-600">
-        {trackUrl ? (
-          <a
-            href={trackUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 font-medium text-brand hover:underline"
-          >
-            {order.trackingNumber || 'Track'}
-            <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-          </a>
-        ) : (
-          <span>—</span>
-        )}
-        {order.carrier ? <p className="text-xs text-slate-400">{order.carrier}</p> : null}
+      <td className="px-3 py-2.5 align-top">
+        <StatusBadge status={order.status} />
       </td>
-      <td className="px-3 py-2.5">
-        <SupplierSelect order={order} />
+      <td className="px-3 py-2.5 align-top">
+        <UspsCell order={order} />
       </td>
-      <td className="px-3 py-2.5">
-        <SupplierTrackingInput order={order} />
+      <td className="px-3 py-2.5 align-top">
+        <TrackingCell order={order} />
       </td>
-      <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">
-        {order.dispatchedAt ? (
-          <span title="Dispatched">{formatOrderDate(order.dispatchedAt)}</span>
-        ) : order.shipByAt ? (
-          <span title="Ship by (not yet dispatched)">
-            <span className="block">{formatOrderDate(order.shipByAt)}</span>
-            <span className="text-xs text-slate-400">Ship by</span>
-          </span>
-        ) : (
-          <span>—</span>
-        )}
+      <td className="px-3 py-2.5 align-top">
+        <SupplierSelect order={order} className="min-w-0 max-w-full" />
       </td>
-      <td className="px-3 py-2.5 text-right">
+      <td className="px-3 py-2.5 align-top">
+        <SupplierTrackingInput order={order} className="min-w-0 max-w-full" />
+      </td>
+      <td className="px-3 py-2.5 align-top whitespace-nowrap text-slate-600">
+        <ShipByCell order={order} />
+      </td>
+      <td className="px-2 py-2.5 align-top text-right">
         {canDelete ? (
           <button
             type="button"
@@ -315,5 +404,90 @@ function OrderRow({
         ) : null}
       </td>
     </tr>
+  );
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</p>
+      <div className="mt-1 text-sm text-slate-800">{children}</div>
+    </div>
+  );
+}
+
+function OrderCard({
+  order,
+  shopLabel,
+  canDelete,
+  onDelete,
+}: {
+  order: Order;
+  shopLabel: string;
+  canDelete: boolean;
+  onDelete: () => void;
+}) {
+  return (
+    <article className="rounded-2xl border border-surface-line bg-white p-4 shadow-sm">
+      <div className="flex items-start gap-3">
+        <Link to={`/orders/${order.id}`} className="shrink-0">
+          {order.imageUrl ? (
+            <img
+              src={order.imageUrl}
+              alt=""
+              className="h-16 w-16 rounded-xl object-cover ring-1 ring-surface-line"
+              loading="lazy"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <span className="inline-flex h-16 w-16 items-center justify-center rounded-xl bg-slate-100 text-slate-400">
+              <Package className="h-6 w-6" />
+            </span>
+          )}
+        </Link>
+        <div className="min-w-0 flex-1">
+          <Link to={`/orders/${order.id}`} className="block">
+            <p className="font-semibold leading-snug text-slate-900 hover:text-brand">
+              {order.product || 'Listing'}
+            </p>
+          </Link>
+          <p className="mt-0.5 text-xs text-slate-500">
+            {shopLabel} · #{order.etsyOrderNumber || '—'} · {formatOrderDate(order.createdAt)}
+          </p>
+          <p className="mt-1 text-sm text-slate-700">{order.customerName || '—'}</p>
+        </div>
+        {canDelete ? (
+          <button
+            type="button"
+            title="Delete order"
+            onClick={onDelete}
+            className="shrink-0 rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        ) : null}
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <Field label="Etsy status">
+          <StatusBadge status={order.status} />
+        </Field>
+        <Field label="USPS">
+          <UspsCell order={order} />
+        </Field>
+        <Field label="Ship by">
+          <ShipByCell order={order} />
+        </Field>
+        <Field label="Tracking">
+          <TrackingCell order={order} />
+        </Field>
+        <Field label="Supplier">
+          <SupplierSelect order={order} className="min-w-0" />
+        </Field>
+        <Field label="Supplier tracking">
+          <SupplierTrackingInput order={order} className="min-w-0" />
+        </Field>
+      </div>
+    </article>
   );
 }

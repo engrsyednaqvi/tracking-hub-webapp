@@ -17,7 +17,7 @@ export function AppShell() {
 
   return (
     <ShopProvider>
-      <div className="mx-auto flex min-h-screen max-w-6xl flex-col px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mx-auto flex min-h-screen w-full max-w-[100rem] flex-col px-3 py-6 sm:px-6 lg:px-8">
         {demoMode ? (
           <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
             Running in demo mode. Add Firebase env vars (see README) to enable real accounts and sync.
