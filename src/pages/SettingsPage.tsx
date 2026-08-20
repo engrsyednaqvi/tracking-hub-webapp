@@ -8,7 +8,7 @@ export function SettingsPage() {
     <div className="max-w-xl space-y-4 rounded-2xl border border-surface-line bg-white p-6 shadow-sm">
       <h2 className="text-xl font-semibold text-slate-900">Settings</h2>
       <p className="text-sm text-slate-600">
-        Account and backend status. Tracking providers and Etsy OAuth will plug in here next.
+        Account and backend status. Order status comes from Etsy sync.
       </p>
       <dl className="space-y-3 text-sm">
         <div className="flex justify-between gap-4 border-t border-surface-line pt-3">
@@ -37,7 +37,7 @@ export function SettingsPage() {
         </div>
       </dl>
 
-      {user
+      {user ? (
         <button
           type="button"
           onClick={() => void logOut()}
