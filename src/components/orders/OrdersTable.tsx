@@ -268,10 +268,11 @@ function UspsCell({ order }: { order: Order }) {
       />
     );
   }
-  if (order.uspsSummary) {
+  const fallback = order.uspsSummary || order.uspsStatusRaw;
+  if (fallback) {
     return (
-      <span className="block truncate text-xs text-slate-500" title={order.uspsStatusRaw}>
-        {order.uspsSummary}
+      <span className="block truncate text-xs text-slate-500" title={order.uspsStatusRaw || fallback}>
+        {fallback}
       </span>
     );
   }

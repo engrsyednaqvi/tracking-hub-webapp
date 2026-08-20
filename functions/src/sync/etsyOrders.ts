@@ -117,11 +117,8 @@ export async function syncShopDocuments(options: SyncOptions): Promise<SyncResul
         let uspsStatusRaw = '';
         let uspsCheckedAt: string | null = null;
 
-        if (
-          enrichUsps &&
-          fields.trackingNumber &&
-          (status === 'pre_transit' || status === 'in_transit' || status === 'delivered')
-        ) {
+        // Enrich any order that has a tracking number (not only pre/in/delivered).
+        if (enrichUsps && fields.trackingNumber && status !== 'cancelled') {
           try {
             const cacheKey = fields.trackingNumber.replace(/\s+/g, '');
             let usps = uspsCache.get(cacheKey);
@@ -136,8 +133,8 @@ export async function syncShopDocuments(options: SyncOptions): Promise<SyncResul
             }
             if (usps) {
               uspsStatus = usps.status;
-              uspsSummary = usps.statusSummary;
-              uspsStatusRaw = usps.raw;
+              uspsSummary = usps.statusSummary || usps.statusCategory || usps.raw;
+              uspsStatusRaw = usps.raw || usps.statusSummary;
               uspsCheckedAt = new Date().toISOString();
               uspsEnriched += 1;
             } else {
@@ -145,6 +142,7 @@ export async function syncShopDocuments(options: SyncOptions): Promise<SyncResul
             }
           } catch (err) {
             uspsError = errorMessage(err, 'USPS tracking lookup failed').slice(0, 240);
+            console.error('[etsySync] USPS:', uspsError);
             uspsSkipped += 1;
           }
         }
@@ -188,9 +186,9 @@ export async function syncShopDocuments(options: SyncOptions): Promise<SyncResul
           etsy,
           ...(uspsCheckedAt
             ? {
-                uspsStatus,
-                uspsSummary,
-                uspsStatusRaw,
+                ...(uspsStatus ? { uspsStatus } : { uspsStatus: uspsSummary ? 'in_transit' : null }),
+                uspsSummary: uspsSummary || uspsStatusRaw || '',
+                uspsStatusRaw: uspsStatusRaw || uspsSummary || '',
                 uspsCheckedAt,
               }
             : {}),

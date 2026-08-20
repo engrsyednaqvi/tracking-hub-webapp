@@ -17,14 +17,29 @@ export interface UspsTrackingResult {
   raw: string;
 }
 
-function looksLikeUsps(trackingNumber: string, carrier: string): boolean {
-  const tn = trackingNumber.replace(/\s+/g, '').toUpperCase();
+/** Skip carriers that are clearly not USPS. */
+function isClearlyNonUsps(carrier: string): boolean {
   const c = carrier.toLowerCase();
-  if (c.includes('usps') || c.includes('united states postal')) return true;
-  // Common USPS patterns (incl. Etsy/Pitney-style 9300…)
-  if (/^(94|93|92|95)\d{18,22}$/.test(tn)) return true;
+  if (c.includes('usps') || c.includes('postal') || c.includes('pitney')) return false;
+  return /\b(ups|fed\s*ex|fedex|dhl|ontrac|laser.?ship|amazon\s*logistics)\b/.test(c);
+}
+
+/** Decide whether to call the USPS Tracking API for this number. */
+export function shouldQueryUsps(trackingNumber: string, carrier = ''): boolean {
+  const tn = trackingNumber.replace(/\s+/g, '').toUpperCase();
+  if (!tn || tn.length < 8) return false;
+  if (isClearlyNonUsps(carrier)) return false;
+
+  const c = carrier.toLowerCase();
+  if (c.includes('usps') || c.includes('postal') || c.includes('pitney')) return true;
+
+  // Common USPS / IMpb / international patterns
+  if (/^(94|93|92|95|23|03)\d{16,}$/.test(tn)) return true;
+  if (/^420\d{25,}$/.test(tn)) return true;
   if (/^[A-Z]{2}\d{9}US$/.test(tn)) return true;
-  if (/^E\D{1}\d{9}US$/.test(tn)) return true;
+  if (/^E[A-Z]\d{9}US$/.test(tn)) return true;
+  // Long digit strings are usually USPS when carrier is blank/unknown
+  if (/^\d{20,34}$/.test(tn)) return true;
   return false;
 }
 
@@ -36,7 +51,6 @@ export async function getUspsAccessToken(creds: {
     return tokenCache.accessToken;
   }
 
-  // OpenAPI accepts JSON or form-urlencoded; prefer JSON per oauth2_update_1.yaml.
   const response = await fetch(TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -53,7 +67,6 @@ export async function getUspsAccessToken(creds: {
     expires_in?: number;
     error?: string;
     error_description?: string;
-    scope?: string;
   };
 
   if (!response.ok || !data.access_token) {
@@ -67,6 +80,66 @@ export async function getUspsAccessToken(creds: {
     expiresAt: Date.now() + Math.max(60, (data.expires_in ?? 3600) - 60) * 1000,
   };
   return data.access_token;
+}
+
+/** Normalize either official statusCategory JSON or TrackSummary/Event shapes. */
+export function extractUspsFields(data: Record<string, unknown>): {
+  statusCategory: string;
+  statusSummary: string;
+  status: string;
+} {
+  const asRecord = (v: unknown): Record<string, unknown> | null =>
+    v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+
+  const str = (...vals: unknown[]) => {
+    for (const v of vals) {
+      if (typeof v === 'string' && v.trim()) return v.trim();
+    }
+    return '';
+  };
+
+  const trackSummary = asRecord(data.TrackSummary) ?? asRecord(data.trackSummary);
+  const event = trackSummary ? str(trackSummary.Event, trackSummary.event) : '';
+  const eventWhere = trackSummary
+    ? [
+        str(trackSummary.EventDate, trackSummary.eventDate),
+        str(trackSummary.EventTime, trackSummary.eventTime),
+        str(trackSummary.EventCity, trackSummary.eventCity),
+        str(trackSummary.EventState, trackSummary.eventState),
+        str(trackSummary.EventZIPCode, trackSummary.eventZIPCode),
+      ]
+        .filter(Boolean)
+        .join(' ')
+    : '';
+
+  const statusCategory = str(
+    data.statusCategory,
+    data.StatusCategory,
+    event,
+  );
+  const status = str(data.status, data.Status, event);
+  const statusSummary = str(
+    data.statusSummary,
+    data.StatusSummary,
+    status,
+    event && eventWhere ? `${event} · ${eventWhere}` : event,
+  );
+
+  // Fall back to first tracking event type when top-level fields are empty
+  if (!statusCategory && !statusSummary) {
+    const events = data.trackingEvents ?? data.TrackDetail ?? data.trackDetail;
+    if (Array.isArray(events) && events.length) {
+      const first = asRecord(events[0]);
+      if (first) {
+        const ev = str(first.eventType, first.Event, first.event, first.eventCode);
+        if (ev) {
+          return { statusCategory: ev, statusSummary: ev, status: ev };
+        }
+      }
+    }
+  }
+
+  return { statusCategory, statusSummary, status };
 }
 
 /** Map USPS statusCategory / summary text → dashboard status. */
@@ -83,17 +156,18 @@ export function statusFromUspsTracking(input: {
 
   if (!blob.trim()) return null;
 
-  if (/\bdelivered\b/.test(blob) || blob.includes('delivered')) return 'delivered';
+  if (/\bdelivered\b/.test(blob)) return 'delivered';
   if (
     blob.includes('pre shipment') ||
     blob.includes('preshipment') ||
-    blob.includes('pre-shipment') ||
+    blob.includes('pre shipment info') ||
     blob.includes('pre transit') ||
-    blob.includes('pre-transit') ||
     blob.includes('label created') ||
     blob.includes('shipping label created') ||
     blob.includes('awaiting item') ||
-    blob.includes('acceptance pending')
+    blob.includes('acceptance pending') ||
+    blob.includes('electronic shipping info received') ||
+    blob.includes('usps awaiting item')
   ) {
     return 'pre_transit';
   }
@@ -104,14 +178,19 @@ export function statusFromUspsTracking(input: {
     blob.includes('departed') ||
     blob.includes('moving through') ||
     blob.includes('accepted') ||
-    blob.includes('in possession')
+    blob.includes('in possession') ||
+    blob.includes('arrived') ||
+    blob.includes('processed') ||
+    blob.includes('distribution center') ||
+    blob.includes('forwarded')
   ) {
     return 'in_transit';
   }
   if (blob.includes('alert') || blob.includes('exception') || blob.includes('return')) {
     return 'in_transit';
   }
-  return null;
+  // Unknown but non-empty USPS text — treat as in transit so the column is not blank
+  return 'in_transit';
 }
 
 export async function fetchUspsTrackingStatus(
@@ -120,7 +199,7 @@ export async function fetchUspsTrackingStatus(
   carrier = '',
 ): Promise<UspsTrackingResult | null> {
   const tn = trackingNumber.replace(/\s+/g, '').trim();
-  if (!tn || !looksLikeUsps(tn, carrier)) return null;
+  if (!tn || !shouldQueryUsps(tn, carrier)) return null;
 
   const accessToken = await getUspsAccessToken(creds);
   const response = await fetch(`${TRACK_URL}/${encodeURIComponent(tn)}?expand=DETAIL`, {
@@ -131,30 +210,28 @@ export async function fetchUspsTrackingStatus(
   });
   const text = await response.text();
   if (!response.ok) {
+    // 404 = not a USPS number / not found yet — skip quietly
+    if (response.status === 404) return null;
     throw new Error(`USPS tracking failed (${response.status}): ${text.slice(0, 300)}`);
   }
 
-  const data = JSON.parse(text) as {
-    statusCategory?: string;
-    statusSummary?: string;
-    status?: string;
-    trackingEvents?: Array<{ eventType?: string }>;
-  };
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    throw new Error(`USPS tracking returned non-JSON: ${text.slice(0, 200)}`);
+  }
 
-  const status = statusFromUspsTracking({
-    statusCategory: data.statusCategory,
-    statusSummary: data.statusSummary,
-    status: data.status,
-  });
+  const fields = extractUspsFields(parsed);
+  const status = statusFromUspsTracking(fields);
 
   return {
     status,
-    statusCategory: String(data.statusCategory ?? ''),
-    statusSummary: String(data.statusSummary ?? data.status ?? ''),
+    statusCategory: fields.statusCategory,
+    statusSummary: fields.statusSummary || fields.statusCategory || fields.status,
     raw: [
-      data.statusCategory && `uspsCategory:${data.statusCategory}`,
-      (data.statusSummary || data.status) &&
-        `uspsSummary:${data.statusSummary || data.status}`,
+      fields.statusCategory && `uspsCategory:${fields.statusCategory}`,
+      fields.statusSummary && `uspsSummary:${fields.statusSummary}`,
     ]
       .filter(Boolean)
       .join(' | '),
