@@ -64,7 +64,9 @@ const ShopContext = createContext<ShopContextValue | null>(null);
 function formatSyncBanner(result: Awaited<ReturnType<typeof syncEtsyOrders>>): string {
   const uspsBit =
     typeof result.uspsEnriched === 'number' ? ` · USPS enriched ${result.uspsEnriched}` : '';
-  const uspsErr = result.uspsError ? ` · USPS: ${result.uspsError}` : '';
+  const uspsErr = result.uspsError
+    ? ` · USPS: ${result.uspsError.replace(/\s+/g, ' ').trim()}`
+    : '';
   const shopErrBit = result.shopErrors?.length
     ? ` · Shop errors: ${result.shopErrors.length}`
     : '';
@@ -175,6 +177,9 @@ export function ShopProvider({ children }: { children: ReactNode }) {
         const banner = formatSyncBanner(result);
         setSyncMessage(banner);
         reportInfo(opts?.silent ? 'Auto-sync' : 'Sync complete', banner);
+        if (result.uspsError) {
+          reportError('USPS tracking', result.uspsError);
+        }
         if (result.shopErrors?.length) {
           reportError('Sync shop errors', result.shopErrors.join('\n'));
         }

@@ -16,7 +16,7 @@ import {
   type OAuthAppCreds,
 } from '../etsy/credentials';
 import { errorMessage } from '../errors';
-import { fetchUspsTrackingStatus } from '../usps/tracking';
+import { fetchUspsTrackingStatus, isUspsTrackingAuthError } from '../usps/tracking';
 
 const adminApp = getApps()[0] ?? initializeApp();
 
@@ -68,6 +68,8 @@ export async function syncShopDocuments(options: SyncOptions): Promise<SyncResul
   let uspsEnriched = 0;
   let uspsSkipped = 0;
   let uspsError: string | null = null;
+  /** After a MID/access-control 403, skip further USPS calls for this sync run. */
+  let uspsAuthBlocked = false;
   const shopErrors: string[] = [];
 
   for (const shopDoc of shopDocs) {
@@ -118,7 +120,7 @@ export async function syncShopDocuments(options: SyncOptions): Promise<SyncResul
         let uspsCheckedAt: string | null = null;
 
         // Enrich any order that has a tracking number (not only pre/in/delivered).
-        if (enrichUsps && fields.trackingNumber && status !== 'cancelled') {
+        if (enrichUsps && !uspsAuthBlocked && fields.trackingNumber && status !== 'cancelled') {
           try {
             const cacheKey = fields.trackingNumber.replace(/\s+/g, '');
             let usps = uspsCache.get(cacheKey);
@@ -141,10 +143,18 @@ export async function syncShopDocuments(options: SyncOptions): Promise<SyncResul
               uspsSkipped += 1;
             }
           } catch (err) {
-            uspsError = errorMessage(err, 'USPS tracking lookup failed').slice(0, 240);
+            uspsError = errorMessage(err, 'USPS tracking lookup failed')
+              .replace(/\s+/g, ' ')
+              .trim()
+              .slice(0, 400);
             console.error('[etsySync] USPS:', uspsError);
             uspsSkipped += 1;
+            if (isUspsTrackingAuthError(err)) {
+              uspsAuthBlocked = true;
+            }
           }
+        } else if (enrichUsps && uspsAuthBlocked && fields.trackingNumber) {
+          uspsSkipped += 1;
         }
 
         // Large images per line item (and hero image from first item).

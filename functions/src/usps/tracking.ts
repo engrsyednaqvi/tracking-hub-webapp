@@ -193,6 +193,46 @@ export function statusFromUspsTracking(input: {
   return 'in_transit';
 }
 
+/** True when USPS rejected the app/MID for Tracking API access (do not retry every package). */
+export function isUspsTrackingAuthError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  return (
+    /\b403\b/.test(msg) &&
+    (/mid is not authorized/i.test(msg) ||
+      /not authorized.*\/tracking/i.test(msg) ||
+      /tracking api access/i.test(msg) ||
+      /ip agreement/i.test(msg))
+  );
+}
+
+function formatUspsHttpError(status: number, body: string): string {
+  const compact = body.replace(/\s+/g, ' ').trim();
+  let apiMessage = '';
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: { message?: string; code?: string };
+      message?: string;
+    };
+    apiMessage = String(parsed.error?.message || parsed.message || '').trim();
+  } catch {
+    apiMessage = compact.slice(0, 280);
+  }
+
+  if (
+    status === 403 &&
+    (/mid is not authorized/i.test(apiMessage) || /not authorized/i.test(apiMessage))
+  ) {
+    return (
+      'USPS Tracking API access denied (MID not authorized). Since Apr 2026 USPS requires ' +
+      'Tracking API Access Control: link your MID in COP (cop.usps.com) and submit an IP Agreement ' +
+      'via https://emailus.usps.com/s/usps-APIs or call 1-877-672-0007 (opt 6 then 2). ' +
+      'Etsy/Pitney labels may remain untrackable under your personal MID.'
+    );
+  }
+
+  return `USPS tracking failed (${status}): ${apiMessage || compact}`.slice(0, 500);
+}
+
 export async function fetchUspsTrackingStatus(
   creds: { consumerKey: string; consumerSecret: string },
   trackingNumber: string,
@@ -212,7 +252,7 @@ export async function fetchUspsTrackingStatus(
   if (!response.ok) {
     // 404 = not a USPS number / not found yet — skip quietly
     if (response.status === 404) return null;
-    throw new Error(`USPS tracking failed (${response.status}): ${text.slice(0, 300)}`);
+    throw new Error(formatUspsHttpError(response.status, text));
   }
 
   let parsed: Record<string, unknown>;

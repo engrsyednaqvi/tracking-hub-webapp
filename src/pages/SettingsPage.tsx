@@ -37,6 +37,34 @@ export function SettingsPage() {
         </div>
       </dl>
 
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+        <p className="font-medium">USPS Tracking API access</p>
+        <p className="mt-1 leading-relaxed">
+          Since April 2026, USPS returns{' '}
+          <span className="font-medium">MID not authorized</span> unless Tracking API Access
+          Control is approved for your account. Link your MID in{' '}
+          <a
+            href="https://cop.usps.com"
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-brand underline"
+          >
+            COP
+          </a>
+          , then request an IP Agreement via{' '}
+          <a
+            href="https://emailus.usps.com/s/usps-APIs"
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-brand underline"
+          >
+            USPS API Support
+          </a>{' '}
+          (or 1-877-672-0007, option 6 then 2). Labels bought through Etsy/Pitney may still be
+          untrackable under a personal MID — Etsy status remains the fallback.
+        </p>
+      </div>
+
       {user ? (
         <button
           type="button"
