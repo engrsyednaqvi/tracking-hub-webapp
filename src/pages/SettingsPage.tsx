@@ -91,8 +91,10 @@ export function SettingsPage() {
           </li>
         </ol>
         <p className="mt-2 leading-relaxed">
-          Free tracking only covers labels that embed <strong>your</strong> Label MID. Until USPS
-          approves broader access, use the Etsy status column for Etsy-bought postage.
+          If My Apps already shows <strong>Approved</strong> and you Refresh Claims’d, portal setup
+          is done. Click <strong>Sync orders</strong> so we mint a fresh OAuth token. Free tracking
+          still only covers labels that embed <strong>your</strong> Label MID; Etsy/Pitney postage
+          usually will not, and needs a USPS IP Agreement ticket.
         </p>
       </div>
 

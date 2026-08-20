@@ -43,14 +43,17 @@ export function shouldQueryUsps(trackingNumber: string, carrier = ''): boolean {
   return false;
 }
 
-export async function getUspsAccessToken(creds: {
-  consumerKey: string;
-  consumerSecret: string;
-  crid?: string;
-  mid?: string;
-  labelMid?: string;
-}): Promise<string> {
-  if (tokenCache && tokenCache.expiresAt > Date.now() + 60_000) {
+export async function getUspsAccessToken(
+  creds: {
+    consumerKey: string;
+    consumerSecret: string;
+    crid?: string;
+    mid?: string;
+    labelMid?: string;
+  },
+  options?: { forceRefresh?: boolean },
+): Promise<string> {
+  if (!options?.forceRefresh && tokenCache && tokenCache.expiresAt > Date.now() + 60_000) {
     return tokenCache.accessToken;
   }
 
@@ -89,6 +92,11 @@ export async function getUspsAccessToken(creds: {
     expiresAt: Date.now() + Math.max(60, (data.expires_in ?? 3600) - 60) * 1000,
   };
   return data.access_token;
+}
+
+/** Drop cached OAuth token (e.g. after Refresh Claims or a 403). */
+export function clearUspsAccessTokenCache(): void {
+  tokenCache = null;
 }
 
 /** Normalize either official statusCategory JSON or TrackSummary/Event shapes. */
@@ -232,11 +240,11 @@ function formatUspsHttpError(status: number, body: string): string {
     (/mid is not authorized/i.test(apiMessage) || /not authorized/i.test(apiMessage))
   ) {
     return (
-      'USPS Tracking API access denied (MID not authorized). Having a CRID/MID is not enough — ' +
-      'in Business Portal accept Tracking T&Cs, run API onboarding (cop.usps.com → API onboarding) ' +
-      'with your Consumer Key, then Refresh Claims and get a new OAuth token. Free tracking only ' +
-      'covers packages mailed under YOUR Label MID. Etsy/Pitney labels use another MID ' +
-      'and need a paid IP Agreement via https://emailus.usps.com/s/usps-APIs.'
+      'USPS Tracking API 403: MID not authorized for this tracking number. ' +
+      'If you already Refresh Claims’d and the app says Approved, free access only covers ' +
+      'packages mailed under YOUR Label MID. Etsy/Pitney labels use another MID — request a ' +
+      'Tracking API / IP Agreement at https://emailus.usps.com/s/usps-APIs or 1-877-672-0007 ' +
+      '(opt 6 then 2).'
     );
   }
 
@@ -257,23 +265,32 @@ export async function fetchUspsTrackingStatus(
   const tn = trackingNumber.replace(/\s+/g, '').trim();
   if (!tn || !shouldQueryUsps(tn, carrier)) return null;
 
-  const accessToken = await getUspsAccessToken(creds);
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${accessToken}`,
-    Accept: 'application/json',
+  const runOnce = async (forceRefresh: boolean) => {
+    const accessToken = await getUspsAccessToken(creds, { forceRefresh });
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+    };
+    if (creds.crid) headers['X-USPS-CRID'] = creds.crid;
+    if (creds.labelMid || creds.mid) {
+      headers['X-USPS-MID'] = (creds.labelMid || creds.mid)!;
+    }
+
+    const response = await fetch(`${TRACK_URL}/${encodeURIComponent(tn)}?expand=DETAIL`, {
+      headers,
+    });
+    const text = await response.text();
+    return { response, text };
   };
-  // Identity headers help after COP links the app to your CRID/MID claims.
-  if (creds.crid) headers['X-USPS-CRID'] = creds.crid;
-  if (creds.labelMid || creds.mid) {
-    headers['X-USPS-MID'] = (creds.labelMid || creds.mid)!;
+
+  let { response, text } = await runOnce(false);
+  // After Refresh Claims, a warm instance may still hold a pre-claims token — retry once fresh.
+  if (response.status === 403) {
+    clearUspsAccessTokenCache();
+    ({ response, text } = await runOnce(true));
   }
 
-  const response = await fetch(`${TRACK_URL}/${encodeURIComponent(tn)}?expand=DETAIL`, {
-    headers,
-  });
-  const text = await response.text();
   if (!response.ok) {
-    // 404 = not a USPS number / not found yet — skip quietly
     if (response.status === 404) return null;
     throw new Error(formatUspsHttpError(response.status, text));
   }
