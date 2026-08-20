@@ -63,7 +63,7 @@ const ShopContext = createContext<ShopContextValue | null>(null);
 
 function formatSyncBanner(result: Awaited<ReturnType<typeof syncEtsyOrders>>): string {
   const uspsBit =
-    typeof result.uspsEnriched === 'number' ? ` · USPS refined ${result.uspsEnriched}` : '';
+    typeof result.uspsEnriched === 'number' ? ` · USPS enriched ${result.uspsEnriched}` : '';
   const uspsErr = result.uspsError ? ` · USPS: ${result.uspsError}` : '';
   const shopErrBit = result.shopErrors?.length
     ? ` · Shop errors: ${result.shopErrors.length}`

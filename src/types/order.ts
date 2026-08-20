@@ -125,6 +125,14 @@ export interface Order {
   status: OrderStatus;
   /** Raw status string from Etsy when present. */
   etsyStatusRaw?: string;
+  /** Normalized USPS tracking status (separate from Etsy status). */
+  uspsStatus?: OrderStatus | null;
+  /** Human-readable USPS status summary from the Tracking API. */
+  uspsSummary?: string;
+  /** Raw USPS status category / summary blob for debugging. */
+  uspsStatusRaw?: string;
+  /** ISO time of the last successful USPS tracking lookup. */
+  uspsCheckedAt?: string;
   /** Rich receipt payload from Open API (after sync). */
   etsy?: OrderEtsyDetails;
   /** Selected supplier doc id when chosen from the user's suppliers list. */

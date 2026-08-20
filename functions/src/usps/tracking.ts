@@ -36,15 +36,16 @@ export async function getUspsAccessToken(creds: {
     return tokenCache.accessToken;
   }
 
+  // OpenAPI accepts JSON or form-urlencoded; prefer JSON per oauth2_update_1.yaml.
   const response = await fetch(TOKEN_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
       grant_type: 'client_credentials',
       client_id: creds.consumerKey,
       client_secret: creds.consumerSecret,
       scope: 'tracking',
-    }).toString(),
+    }),
   });
 
   const data = (await response.json()) as {

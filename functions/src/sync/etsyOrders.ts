@@ -110,8 +110,12 @@ export async function syncShopDocuments(options: SyncOptions): Promise<SyncResul
         const fields = mapReceiptToOrderFields(receipt);
         if (!fields.etsyReceiptId) continue;
 
-        let status: EtsyShippingStatus = fields.status;
-        let etsyStatusRaw = fields.etsyStatusRaw;
+        const status: EtsyShippingStatus = fields.status;
+        const etsyStatusRaw = fields.etsyStatusRaw;
+        let uspsStatus: EtsyShippingStatus | null = null;
+        let uspsSummary = '';
+        let uspsStatusRaw = '';
+        let uspsCheckedAt: string | null = null;
 
         if (
           enrichUsps &&
@@ -130,11 +134,13 @@ export async function syncShopDocuments(options: SyncOptions): Promise<SyncResul
               uspsCache.set(cacheKey, usps);
               await new Promise((r) => setTimeout(r, 200));
             }
-            if (usps?.status) {
-              status = usps.status;
-              etsyStatusRaw = [fields.etsyStatusRaw, usps.raw].filter(Boolean).join(' | ');
+            if (usps) {
+              uspsStatus = usps.status;
+              uspsSummary = usps.statusSummary;
+              uspsStatusRaw = usps.raw;
+              uspsCheckedAt = new Date().toISOString();
               uspsEnriched += 1;
-            } else if (usps === null) {
+            } else {
               uspsSkipped += 1;
             }
           } catch (err) {
@@ -180,6 +186,14 @@ export async function syncShopDocuments(options: SyncOptions): Promise<SyncResul
           trackingNumber: fields.trackingNumber,
           carrier: fields.carrier,
           etsy,
+          ...(uspsCheckedAt
+            ? {
+                uspsStatus,
+                uspsSummary,
+                uspsStatusRaw,
+                uspsCheckedAt,
+              }
+            : {}),
           ...(fields.dispatchedAt ? { dispatchedAt: fields.dispatchedAt } : {}),
           ...(fields.shipByAt ? { shipByAt: fields.shipByAt } : {}),
           updatedAt: now,
