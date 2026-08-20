@@ -127,8 +127,13 @@ export interface Order {
   etsyStatusRaw?: string;
   /** Rich receipt payload from Open API (after sync). */
   etsy?: OrderEtsyDetails;
+  /** Selected supplier doc id when chosen from the user's suppliers list. */
+  supplierId?: string;
+  /** Denormalized supplier display name (stable if the supplier is renamed/deleted). */
   supplierName: string;
   supplierOrderNumber: string;
+  /** Manual supplier / warehouse tracking number (not Etsy outbound). */
+  supplierTrackingNumber: string;
   trackingNumber: string;
   carrier: string;
   /** Etsy postage label id when purchased via Etsy Shipping. */

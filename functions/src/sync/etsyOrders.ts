@@ -206,6 +206,7 @@ export async function syncShopDocuments(options: SyncOptions): Promise<SyncResul
             etsyReceiptId: fields.etsyReceiptId,
             supplierName: '',
             supplierOrderNumber: '',
+            supplierTrackingNumber: '',
             createdAt: fields.createdAt,
             ...shared,
           });

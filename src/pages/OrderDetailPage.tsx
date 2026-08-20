@@ -9,6 +9,11 @@ import {
   Package,
   Truck,
 } from 'lucide-react';
+import {
+  SupplierOrderNumberInput,
+  SupplierSelect,
+  SupplierTrackingInput,
+} from '@/components/orders/SupplierFields';
 import { useShops } from '@/context/ShopContext';
 import { formatOrderDate, formatOrderDateTime } from '@/utils/date';
 import { etsyOrderUrl } from '@/utils/etsyLinks';
@@ -474,13 +479,35 @@ export function OrderDetailPage() {
         </Section>
       ) : null}
 
-      <Section title="Supplier (local)">
-        <dl className="grid gap-2 text-sm sm:grid-cols-2">
-          <Detail label="Supplier" value={order.supplierName || '—'} />
-          <Detail label="Supplier order #" value={order.supplierOrderNumber || '—'} />
+      <Section title="Supplier">
+        <div className="grid gap-3 text-sm sm:grid-cols-2">
+          <label className="block">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+              Supplier
+            </span>
+            <div className="mt-1">
+              <SupplierSelect order={order} />
+            </div>
+          </label>
+          <label className="block">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+              Supplier order #
+            </span>
+            <div className="mt-1">
+              <SupplierOrderNumberInput order={order} />
+            </div>
+          </label>
+          <label className="block sm:col-span-2">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+              Supplier tracking
+            </span>
+            <div className="mt-1 max-w-md">
+              <SupplierTrackingInput order={order} />
+            </div>
+          </label>
           <Detail label="Etsy status raw" value={order.etsyStatusRaw || '—'} />
           <Detail label="Updated" value={formatOrderDateTime(order.updatedAt)} />
-        </dl>
+        </div>
       </Section>
 
       {etsy?.raw && Object.keys(etsy.raw).length ? (

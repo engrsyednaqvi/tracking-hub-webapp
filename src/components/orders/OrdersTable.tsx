@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useShops } from '@/context/ShopContext';
+import { SupplierSelect, SupplierTrackingInput } from '@/components/orders/SupplierFields';
 import { deleteOrder } from '@/services/orders';
 import { formatOrderDate } from '@/utils/date';
 import {
@@ -150,6 +151,8 @@ export function OrdersTable({
                   />
                 </th>
                 <th className="px-3 py-2.5 font-medium">Tracking</th>
+                <th className="px-3 py-2.5 font-medium">Supplier</th>
+                <th className="px-3 py-2.5 font-medium">Supplier tracking</th>
                 <th className="px-3 py-2.5 font-medium">
                   <SortButton
                     label="Ship by"
@@ -280,6 +283,12 @@ function OrderRow({
           <span>—</span>
         )}
         {order.carrier ? <p className="text-xs text-slate-400">{order.carrier}</p> : null}
+      </td>
+      <td className="px-3 py-2.5">
+        <SupplierSelect order={order} />
+      </td>
+      <td className="px-3 py-2.5">
+        <SupplierTrackingInput order={order} />
       </td>
       <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">
         {order.dispatchedAt ? (

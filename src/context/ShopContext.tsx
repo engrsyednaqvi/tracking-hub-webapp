@@ -8,12 +8,13 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { DEMO_ORDERS, DEMO_SHOPS, type Order, type Shop } from '@/types';
+import { DEMO_ORDERS, DEMO_SHOPS, DEMO_SUPPLIERS, type Order, type Shop, type Supplier } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { useAppErrors } from '@/context/ErrorContext';
 import { syncEtsyOrders } from '@/lib/functions';
 import { subscribeOrders } from '@/services/orders';
 import { subscribeShops } from '@/services/shops';
+import { createSupplier, subscribeSuppliers } from '@/services/suppliers';
 
 type ShopFilter = 'all' | string;
 
@@ -22,6 +23,7 @@ const AUTO_SYNC_MS = 30 * 60 * 1000;
 interface ShopContextValue {
   shops: Shop[];
   orders: Order[];
+  suppliers: Supplier[];
   activeShopId: ShopFilter;
   setActiveShopId: (id: ShopFilter) => void;
   activeShop: Shop | null;
@@ -34,6 +36,7 @@ interface ShopContextValue {
   lastSyncedAt: string | null;
   syncAll: () => Promise<void>;
   syncShop: (shopId: string) => Promise<void>;
+  addSupplier: (name: string) => Promise<Supplier>;
 }
 
 function resolveLastSyncedAt(shops: Shop[], activeShopId: ShopFilter): string | null {
@@ -73,6 +76,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
   const { reportError, reportInfo } = useAppErrors();
   const [shops, setShops] = useState<Shop[]>(demoMode ? DEMO_SHOPS : []);
   const [orders, setOrders] = useState<Order[]>(demoMode ? DEMO_ORDERS : []);
+  const [suppliers, setSuppliers] = useState<Supplier[]>(demoMode ? DEMO_SUPPLIERS : []);
   const [activeShopId, setActiveShopId] = useState<ShopFilter>('all');
   const [loading, setLoading] = useState(!demoMode);
   const [error, setError] = useState<string | null>(null);
@@ -84,6 +88,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     if (demoMode) {
       setShops(DEMO_SHOPS);
       setOrders(DEMO_ORDERS);
+      setSuppliers(DEMO_SUPPLIERS);
       setLoading(false);
       setError(null);
       return;
@@ -91,6 +96,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     if (!user) {
       setShops([]);
       setOrders([]);
+      setSuppliers([]);
       setLoading(false);
       return;
     }
@@ -129,10 +135,16 @@ export function ShopProvider({ children }: { children: ReactNode }) {
         maybeDone();
       },
     );
+    const unsubSuppliers = subscribeSuppliers(
+      user.uid,
+      (next) => setSuppliers(next),
+      (err) => setError(err.message),
+    );
 
     return () => {
       unsubShops();
       unsubOrders();
+      unsubSuppliers();
     };
   }, [user, demoMode]);
 
@@ -181,6 +193,27 @@ export function ShopProvider({ children }: { children: ReactNode }) {
   const syncAll = useCallback(() => runSync(), [runSync]);
   const syncShop = useCallback((shopId: string) => runSync(shopId), [runSync]);
 
+  const addSupplier = useCallback(
+    async (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) throw new Error('Supplier name is required');
+      if (demoMode) {
+        const now = new Date().toISOString();
+        const supplier: Supplier = {
+          id: `supplier-demo-${Date.now()}`,
+          name: trimmed,
+          createdAt: now,
+          updatedAt: now,
+        };
+        setSuppliers((prev) => [...prev, supplier]);
+        return supplier;
+      }
+      if (!user) throw new Error('Sign in to add suppliers.');
+      return createSupplier(user.uid, { name: trimmed });
+    },
+    [demoMode, user],
+  );
+
   // Free client-side auto-sync while the app tab is open (~48 calls/day).
   useEffect(() => {
     if (demoMode || !user) return;
@@ -201,6 +234,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     return {
       shops,
       orders,
+      suppliers,
       activeShopId,
       setActiveShopId,
       activeShop: shops.find((s) => s.id === activeShopId) ?? null,
@@ -212,8 +246,21 @@ export function ShopProvider({ children }: { children: ReactNode }) {
       lastSyncedAt: resolveLastSyncedAt(shops, activeShopId),
       syncAll,
       syncShop,
+      addSupplier,
     };
-  }, [shops, orders, activeShopId, loading, error, syncing, syncMessage, syncAll, syncShop]);
+  }, [
+    shops,
+    orders,
+    suppliers,
+    activeShopId,
+    loading,
+    error,
+    syncing,
+    syncMessage,
+    syncAll,
+    syncShop,
+    addSupplier,
+  ]);
 
   return <ShopContext.Provider value={value}>{children}</ShopContext.Provider>;
 }
