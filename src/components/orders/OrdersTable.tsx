@@ -143,18 +143,17 @@ export function OrdersTable({
 
           {/* Desktop: wide table with column floors + horizontal scroll if needed */}
           <div className="hidden overflow-x-auto rounded-2xl border border-surface-line bg-white shadow-sm xl:block">
-            <table className="w-full min-w-[78rem] table-fixed text-left text-sm">
+            <table className="w-full min-w-[70rem] table-fixed text-left text-sm">
               <colgroup>
-                <col className="w-[16%]" />
-                <col className="w-[7%]" />
-                <col className="w-[7%]" />
+                <col className="w-[17%]" />
+                <col className="w-[8%]" />
+                <col className="w-[8%]" />
+                <col className="w-[10%]" />
                 <col className="w-[9%]" />
-                <col className="w-[8%]" />
-                <col className="w-[8%]" />
-                <col className="w-[10%]" />
-                <col className="w-[10%]" />
+                <col className="w-[11%]" />
+                <col className="w-[11%]" />
                 <col className="w-[12%]" />
-                <col className="w-[8%]" />
+                <col className="w-[9%]" />
                 <col className="w-[3%]" />
               </colgroup>
               <thead className="border-b border-surface-line bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
@@ -172,13 +171,12 @@ export function OrdersTable({
                   <th className="px-3 py-2.5 font-medium">Customer</th>
                   <th className="px-3 py-2.5 font-medium">
                     <SortButton
-                      label="Etsy"
+                      label="Status"
                       active={sortKey === 'status'}
                       dir={sortDir}
                       onClick={() => toggleSort('status')}
                     />
                   </th>
-                  <th className="px-3 py-2.5 font-medium">USPS</th>
                   <th className="px-3 py-2.5 font-medium">Tracking</th>
                   <th className="px-3 py-2.5 font-medium">Supplier</th>
                   <th className="px-3 py-2.5 font-medium">Supplier track</th>
@@ -243,7 +241,7 @@ function StatusBadge({
   status,
   title,
 }: {
-  status: Order['status'] | NonNullable<Order['uspsStatus']>;
+  status: Order['status'];
   title?: string;
 }) {
   return (
@@ -257,26 +255,6 @@ function StatusBadge({
       {statusLabel(status)}
     </span>
   );
-}
-
-function UspsCell({ order }: { order: Order }) {
-  if (order.uspsStatus) {
-    return (
-      <StatusBadge
-        status={order.uspsStatus}
-        title={order.uspsSummary || order.uspsStatusRaw || statusHelp(order.uspsStatus)}
-      />
-    );
-  }
-  const fallback = order.uspsSummary || order.uspsStatusRaw;
-  if (fallback) {
-    return (
-      <span className="block truncate text-xs text-slate-500" title={order.uspsStatusRaw || fallback}>
-        {fallback}
-      </span>
-    );
-  }
-  return <span className="text-slate-400">—</span>;
 }
 
 function TrackingCell({ order }: { order: Order }) {
@@ -378,9 +356,6 @@ function OrderRow({
         <StatusBadge status={order.status} />
       </td>
       <td className="px-3 py-2.5 align-top">
-        <UspsCell order={order} />
-      </td>
-      <td className="px-3 py-2.5 align-top">
         <TrackingCell order={order} />
       </td>
       <td className="px-3 py-2.5 align-top">
@@ -470,11 +445,8 @@ function OrderCard({
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Field label="Etsy status">
+        <Field label="Status">
           <StatusBadge status={order.status} />
-        </Field>
-        <Field label="USPS">
-          <UspsCell order={order} />
         </Field>
         <Field label="Ship by">
           <ShipByCell order={order} />

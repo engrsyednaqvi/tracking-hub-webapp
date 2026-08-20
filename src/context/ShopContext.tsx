@@ -62,15 +62,10 @@ function resolveLastSyncedAt(shops: Shop[], activeShopId: ShopFilter): string | 
 const ShopContext = createContext<ShopContextValue | null>(null);
 
 function formatSyncBanner(result: Awaited<ReturnType<typeof syncEtsyOrders>>): string {
-  const uspsBit =
-    typeof result.uspsEnriched === 'number' ? ` · USPS enriched ${result.uspsEnriched}` : '';
-  const uspsErr = result.uspsError
-    ? ` · USPS: ${result.uspsError.replace(/\s+/g, ' ').trim()}`
-    : '';
   const shopErrBit = result.shopErrors?.length
     ? ` · Shop errors: ${result.shopErrors.length}`
     : '';
-  return `Synced ${result.shops} shop(s): ${result.created} new, ${result.updated} updated (last ${result.syncDays} days)${uspsBit}${uspsErr}${shopErrBit}.`;
+  return `Synced ${result.shops} shop(s): ${result.created} new, ${result.updated} updated (last ${result.syncDays} days)${shopErrBit}.`;
 }
 
 export function ShopProvider({ children }: { children: ReactNode }) {
@@ -177,9 +172,6 @@ export function ShopProvider({ children }: { children: ReactNode }) {
         const banner = formatSyncBanner(result);
         setSyncMessage(banner);
         reportInfo(opts?.silent ? 'Auto-sync' : 'Sync complete', banner);
-        if (result.uspsError) {
-          reportError('USPS tracking', result.uspsError);
-        }
         if (result.shopErrors?.length) {
           reportError('Sync shop errors', result.shopErrors.join('\n'));
         }

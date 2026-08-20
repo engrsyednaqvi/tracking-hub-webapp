@@ -331,19 +331,8 @@ export function OrderDetailPage() {
                       statusTone(order.status),
                     )}
                   >
-                    Etsy: {statusLabel(order.status)}
+                    {statusLabel(order.status)}
                   </span>
-                  {order.uspsStatus ? (
-                    <span
-                      title={order.uspsSummary || order.uspsStatusRaw || undefined}
-                      className={cn(
-                        'inline-flex rounded-md px-2.5 py-1 text-xs font-medium',
-                        statusTone(order.uspsStatus),
-                      )}
-                    >
-                      USPS: {statusLabel(order.uspsStatus)}
-                    </span>
-                  ) : null}
                   {etsy?.status ? (
                     <span className="rounded-md bg-slate-100 px-2.5 py-1 text-xs text-slate-600">
                       Receipt: {etsy.status}
@@ -412,17 +401,6 @@ export function OrderDetailPage() {
         <Section title="Tracking & shipments" icon={<Truck className="h-4 w-4" />}>
           <dl className="grid gap-2 text-sm">
             <Detail label="Carrier" value={order.carrier || '—'} />
-            <Detail
-              label="USPS status"
-              value={
-                order.uspsStatus
-                  ? statusLabel(order.uspsStatus)
-                  : order.uspsSummary || '—'
-              }
-            />
-            <Detail label="USPS summary" value={order.uspsSummary || '—'} />
-            <Detail label="USPS raw" value={order.uspsStatusRaw || '—'} />
-            <Detail label="USPS checked" value={formatOrderDateTime(order.uspsCheckedAt)} />
             <div className="rounded-xl border border-surface-line/80 px-3 py-2">
               <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
                 Tracking

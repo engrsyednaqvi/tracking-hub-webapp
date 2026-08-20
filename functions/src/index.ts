@@ -110,22 +110,19 @@ function globalFallbackCreds(): OAuthAppCreds {
 }
 
 function uspsCreds() {
-  return {
-    consumerKey: uspsConsumerKey.value().trim(),
-    consumerSecret: uspsConsumerSecret.value().trim(),
-    crid: uspsCrid.value().trim(),
-    mid: uspsMid.value().trim(),
-    labelMid: uspsLabelMid.value().trim(),
-  };
+  // Kept for optional future Open API enrichment; sync currently uses Etsy status only.
+  try {
+    return {
+      consumerKey: uspsConsumerKey.value().trim(),
+      consumerSecret: uspsConsumerSecret.value().trim(),
+      crid: uspsCrid.value().trim(),
+      mid: uspsMid.value().trim(),
+      labelMid: uspsLabelMid.value().trim(),
+    };
+  } catch {
+    return { consumerKey: '', consumerSecret: '', crid: '', mid: '', labelMid: '' };
+  }
 }
-
-const uspsSecrets = [
-  uspsConsumerKey,
-  uspsConsumerSecret,
-  uspsCrid,
-  uspsMid,
-  uspsLabelMid,
-] as const;
 
 /** Start Etsy OAuth — returns authorize URL for the browser. */
 export const etsyOAuthStart = onCall(
@@ -311,7 +308,7 @@ export const etsyOAuthCallback = onRequest(
 /** Sync paid receipts for one shop (or all connected shops). */
 export const etsySync = onCall(
   {
-    secrets: [etsyKeystring, etsySharedSecret, ...uspsSecrets],
+    secrets: [etsyKeystring, etsySharedSecret],
     cors: true,
     timeoutSeconds: 300,
   },
@@ -353,7 +350,7 @@ export const etsySync = onCall(
         syncDays,
         globalFallback: globalFallbackCreds(),
         uspsCreds: uspsCreds(),
-        enrichUsps: true,
+        enrichUsps: false,
       });
 
       if (result.shopErrors.length && result.created === 0 && result.updated === 0) {
@@ -376,7 +373,7 @@ export const etsySync = onCall(
  */
 export const etsyWebhook = onRequest(
   {
-    secrets: [etsyKeystring, etsySharedSecret, ...uspsSecrets, etsyWebhookSecrets],
+    secrets: [etsyKeystring, etsySharedSecret, etsyWebhookSecrets],
     timeoutSeconds: 120,
     memory: '512MiB',
   },
@@ -468,7 +465,7 @@ export const etsyWebhook = onRequest(
           syncDays: 14,
           globalFallback: globalFallbackCreds(),
           uspsCreds: uspsCreds(),
-          // Fast path — scheduled job does USPS enrichment.
+          // Etsy status only — USPS Open API enrichment disabled.
           enrichUsps: false,
         });
         created += result.created;
@@ -492,13 +489,13 @@ export const etsyWebhook = onRequest(
 
 /**
  * Background sync for all connected shops (works with the website closed).
- * Complements Etsy webhooks for missed events + USPS enrichment.
+ * Complements Etsy webhooks for missed events (Etsy status from receipts).
  */
 export const etsyScheduledSync = onSchedule(
   {
     schedule: 'every 30 minutes',
     timeZone: 'America/New_York',
-    secrets: [etsyKeystring, etsySharedSecret, ...uspsSecrets],
+    secrets: [etsyKeystring, etsySharedSecret],
     timeoutSeconds: 540,
     memory: '1GiB',
   },
@@ -526,7 +523,7 @@ export const etsyScheduledSync = onSchedule(
           syncDays: 30,
           globalFallback: globalFallbackCreds(),
           uspsCreds: uspsCreds(),
-          enrichUsps: true,
+          enrichUsps: false,
         });
         created += result.created;
         updated += result.updated;

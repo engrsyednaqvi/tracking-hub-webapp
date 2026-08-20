@@ -37,68 +37,7 @@ export function SettingsPage() {
         </div>
       </dl>
 
-      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-        <p className="font-medium">USPS Tracking API access</p>
-        <p className="mt-1 leading-relaxed">
-          Your CRID / Master MID / Label MID are saved as Firebase secrets. USPS still has to
-          authorize the <em>app</em> for tracking. Portal menus vary — use these working entry
-          points:
-        </p>
-        <ol className="mt-2 list-decimal space-y-1.5 pl-5 leading-relaxed">
-          <li>
-            Open{' '}
-            <a
-              href="https://cop.usps.com"
-              target="_blank"
-              rel="noreferrer"
-              className="font-medium text-brand underline"
-            >
-              cop.usps.com
-            </a>{' '}
-            (or{' '}
-            <a
-              href="https://developers.usps.com"
-              target="_blank"
-              rel="noreferrer"
-              className="font-medium text-brand underline"
-            >
-              developers.usps.com
-            </a>
-            ) and sign in.
-          </li>
-          <li>
-            Go to <strong>My Apps</strong> → open your app. If a Terms banner/modal appears,
-            accept it (it may not say “Tracking T&amp;Cs”). Then click{' '}
-            <strong>Refresh Claims</strong> if shown.
-          </li>
-          <li>
-            If you see “Authorize app” / enter Consumer Key, paste your app’s Consumer Key so
-            CRID/MID attach to the app.
-          </li>
-          <li>
-            For packages <strong>not</strong> mailed under your Label MID (most Etsy/Pitney
-            labels), open a ticket at{' '}
-            <a
-              href="https://emailus.usps.com/s/usps-APIs"
-              target="_blank"
-              rel="noreferrer"
-              className="font-medium text-brand underline"
-            >
-              emailus.usps.com/s/usps-APIs
-            </a>{' '}
-            and ask for Tracking API Access Control / IP Agreement. Helpdesk:{' '}
-            <span className="font-medium">1-877-672-0007</span> (option 6, then 2).
-          </li>
-        </ol>
-        <p className="mt-2 leading-relaxed">
-          If My Apps already shows <strong>Approved</strong> and you Refresh Claims’d, portal setup
-          is done. Click <strong>Sync orders</strong> so we mint a fresh OAuth token. Free tracking
-          still only covers labels that embed <strong>your</strong> Label MID; Etsy/Pitney postage
-          usually will not, and needs a USPS IP Agreement ticket.
-        </p>
-      </div>
-
-      {user ? (
+      {user
         <button
           type="button"
           onClick={() => void logOut()}
