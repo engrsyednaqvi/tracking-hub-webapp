@@ -235,7 +235,7 @@ function formatUspsHttpError(status: number, body: string): string {
       'USPS Tracking API access denied (MID not authorized). Having a CRID/MID is not enough — ' +
       'in Business Portal accept Tracking T&Cs, run API onboarding (cop.usps.com → API onboarding) ' +
       'with your Consumer Key, then Refresh Claims and get a new OAuth token. Free tracking only ' +
-      'covers packages mailed under YOUR Label MID (904240993). Etsy/Pitney labels use another MID ' +
+      'covers packages mailed under YOUR Label MID. Etsy/Pitney labels use another MID ' +
       'and need a paid IP Agreement via https://emailus.usps.com/s/usps-APIs.'
     );
   }
