@@ -44,7 +44,13 @@ export type SyncOptions = {
   shopDocs: QueryDocumentSnapshot[];
   syncDays: number;
   globalFallback: OAuthAppCreds;
-  uspsCreds: { consumerKey: string; consumerSecret: string };
+  uspsCreds: {
+    consumerKey: string;
+    consumerSecret: string;
+    crid?: string;
+    mid?: string;
+    labelMid?: string;
+  };
   /** When false, skip USPS enrichment (faster — used by webhooks). */
   enrichUsps?: boolean;
 };

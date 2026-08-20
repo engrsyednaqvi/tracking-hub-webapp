@@ -35,6 +35,9 @@ const etsyKeystring = defineSecret('ETSY_KEYSTRING');
 const etsySharedSecret = defineSecret('ETSY_SHARED_SECRET');
 const uspsConsumerKey = defineSecret('USPS_CONSUMER_KEY');
 const uspsConsumerSecret = defineSecret('USPS_CONSUMER_SECRET');
+const uspsCrid = defineSecret('USPS_CRID');
+const uspsMid = defineSecret('USPS_MID');
+const uspsLabelMid = defineSecret('USPS_LABEL_MID');
 /** Newline or comma-separated whsec_… secrets (one per Seller app webhook). */
 const etsyWebhookSecrets = defineSecret('ETSY_WEBHOOK_SECRETS');
 const webappOrigin = defineString('WEBAPP_ORIGIN', {
@@ -110,8 +113,19 @@ function uspsCreds() {
   return {
     consumerKey: uspsConsumerKey.value().trim(),
     consumerSecret: uspsConsumerSecret.value().trim(),
+    crid: uspsCrid.value().trim(),
+    mid: uspsMid.value().trim(),
+    labelMid: uspsLabelMid.value().trim(),
   };
 }
+
+const uspsSecrets = [
+  uspsConsumerKey,
+  uspsConsumerSecret,
+  uspsCrid,
+  uspsMid,
+  uspsLabelMid,
+] as const;
 
 /** Start Etsy OAuth — returns authorize URL for the browser. */
 export const etsyOAuthStart = onCall(
@@ -297,7 +311,7 @@ export const etsyOAuthCallback = onRequest(
 /** Sync paid receipts for one shop (or all connected shops). */
 export const etsySync = onCall(
   {
-    secrets: [etsyKeystring, etsySharedSecret, uspsConsumerKey, uspsConsumerSecret],
+    secrets: [etsyKeystring, etsySharedSecret, ...uspsSecrets],
     cors: true,
     timeoutSeconds: 300,
   },
@@ -362,13 +376,7 @@ export const etsySync = onCall(
  */
 export const etsyWebhook = onRequest(
   {
-    secrets: [
-      etsyKeystring,
-      etsySharedSecret,
-      uspsConsumerKey,
-      uspsConsumerSecret,
-      etsyWebhookSecrets,
-    ],
+    secrets: [etsyKeystring, etsySharedSecret, ...uspsSecrets, etsyWebhookSecrets],
     timeoutSeconds: 120,
     memory: '512MiB',
   },
@@ -490,7 +498,7 @@ export const etsyScheduledSync = onSchedule(
   {
     schedule: 'every 30 minutes',
     timeZone: 'America/New_York',
-    secrets: [etsyKeystring, etsySharedSecret, uspsConsumerKey, uspsConsumerSecret],
+    secrets: [etsyKeystring, etsySharedSecret, ...uspsSecrets],
     timeoutSeconds: 540,
     memory: '1GiB',
   },

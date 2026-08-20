@@ -40,18 +40,30 @@ export function SettingsPage() {
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
         <p className="font-medium">USPS Tracking API access</p>
         <p className="mt-1 leading-relaxed">
-          Since April 2026, USPS returns{' '}
-          <span className="font-medium">MID not authorized</span> unless Tracking API Access
-          Control is approved for your account. Link your MID in{' '}
-          <a
-            href="https://cop.usps.com"
-            target="_blank"
-            rel="noreferrer"
-            className="font-medium text-brand underline"
-          >
-            COP
-          </a>
-          , then request an IP Agreement via{' '}
+          Your CRID / Master MID / Label MID are saved as Firebase secrets. They still must be
+          linked to your Developer App:
+        </p>
+        <ol className="mt-2 list-decimal space-y-1 pl-5 leading-relaxed">
+          <li>
+            Accept Tracking T&amp;Cs in Business Portal → My Apps → Developer Apps → Manage
+          </li>
+          <li>
+            Run{' '}
+            <a
+              href="https://cop.usps.com/navigator?wf=apionboarding"
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium text-brand underline"
+            >
+              API onboarding
+            </a>{' '}
+            and enter your Consumer Key so CRID/MID attach to the app
+          </li>
+          <li>Refresh Claims on the app, then Sync again (forces a new OAuth token)</li>
+        </ol>
+        <p className="mt-2 leading-relaxed">
+          Free tracking only covers packages mailed under <strong>your</strong> Label MID. Etsy /
+          Pitney labels embed a different MID — those need a paid IP Agreement via{' '}
           <a
             href="https://emailus.usps.com/s/usps-APIs"
             target="_blank"
@@ -59,9 +71,8 @@ export function SettingsPage() {
             className="font-medium text-brand underline"
           >
             USPS API Support
-          </a>{' '}
-          (or 1-877-672-0007, option 6 then 2). Labels bought through Etsy/Pitney may still be
-          untrackable under a personal MID — Etsy status remains the fallback.
+          </a>
+          . Until then, use the Etsy status column for those orders.
         </p>
       </div>
 

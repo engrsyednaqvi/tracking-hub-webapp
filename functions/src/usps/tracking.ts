@@ -46,20 +46,29 @@ export function shouldQueryUsps(trackingNumber: string, carrier = ''): boolean {
 export async function getUspsAccessToken(creds: {
   consumerKey: string;
   consumerSecret: string;
+  crid?: string;
+  mid?: string;
+  labelMid?: string;
 }): Promise<string> {
   if (tokenCache && tokenCache.expiresAt > Date.now() + 60_000) {
     return tokenCache.accessToken;
   }
 
+  const body: Record<string, string> = {
+    grant_type: 'client_credentials',
+    client_id: creds.consumerKey,
+    client_secret: creds.consumerSecret,
+    scope: 'tracking',
+  };
+  // Some USPS onboarding flows expect CRID/MID present when refreshing claims.
+  if (creds.crid) body.customer_registration_id = creds.crid;
+  if (creds.mid) body.mailer_id = creds.mid;
+  if (creds.labelMid) body.manifest_mid = creds.labelMid;
+
   const response = await fetch(TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({
-      grant_type: 'client_credentials',
-      client_id: creds.consumerKey,
-      client_secret: creds.consumerSecret,
-      scope: 'tracking',
-    }),
+    body: JSON.stringify(body),
   });
 
   const data = (await response.json()) as {
@@ -223,10 +232,11 @@ function formatUspsHttpError(status: number, body: string): string {
     (/mid is not authorized/i.test(apiMessage) || /not authorized/i.test(apiMessage))
   ) {
     return (
-      'USPS Tracking API access denied (MID not authorized). Since Apr 2026 USPS requires ' +
-      'Tracking API Access Control: link your MID in COP (cop.usps.com) and submit an IP Agreement ' +
-      'via https://emailus.usps.com/s/usps-APIs or call 1-877-672-0007 (opt 6 then 2). ' +
-      'Etsy/Pitney labels may remain untrackable under your personal MID.'
+      'USPS Tracking API access denied (MID not authorized). Having a CRID/MID is not enough — ' +
+      'in Business Portal accept Tracking T&Cs, run API onboarding (cop.usps.com → API onboarding) ' +
+      'with your Consumer Key, then Refresh Claims and get a new OAuth token. Free tracking only ' +
+      'covers packages mailed under YOUR Label MID (904240993). Etsy/Pitney labels use another MID ' +
+      'and need a paid IP Agreement via https://emailus.usps.com/s/usps-APIs.'
     );
   }
 
@@ -234,7 +244,13 @@ function formatUspsHttpError(status: number, body: string): string {
 }
 
 export async function fetchUspsTrackingStatus(
-  creds: { consumerKey: string; consumerSecret: string },
+  creds: {
+    consumerKey: string;
+    consumerSecret: string;
+    crid?: string;
+    mid?: string;
+    labelMid?: string;
+  },
   trackingNumber: string,
   carrier = '',
 ): Promise<UspsTrackingResult | null> {
@@ -242,11 +258,18 @@ export async function fetchUspsTrackingStatus(
   if (!tn || !shouldQueryUsps(tn, carrier)) return null;
 
   const accessToken = await getUspsAccessToken(creds);
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${accessToken}`,
+    Accept: 'application/json',
+  };
+  // Identity headers help after COP links the app to your CRID/MID claims.
+  if (creds.crid) headers['X-USPS-CRID'] = creds.crid;
+  if (creds.labelMid || creds.mid) {
+    headers['X-USPS-MID'] = (creds.labelMid || creds.mid)!;
+  }
+
   const response = await fetch(`${TRACK_URL}/${encodeURIComponent(tn)}?expand=DETAIL`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: 'application/json',
-    },
+    headers,
   });
   const text = await response.text();
   if (!response.ok) {
